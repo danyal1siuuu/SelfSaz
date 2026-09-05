@@ -241,7 +241,6 @@ async def start(self):
 
     async def handle_update(self, update):
         global REGISTRATION_OPEN, GLOBAL_MAINTENANCE, LOG_DELETED_MSGS, ANTI_SPAM_PROTECT, CHANNEL_URL, MAX_ALLOWED_SELFS
-
         # ----------------- پردازش پیام‌های متنی ورودی -----------------
         if "message" in update:
             msg = update["message"]
