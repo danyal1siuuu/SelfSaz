@@ -1,6 +1,22 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import os
+import pyrogram.utils
+
+# رفع باگ کانال‌ها و گروه‌های جدید تلگرام در پایروگرام
+def get_peer_type_new(peer_id: int) -> str:
+    peer_id_str = str(peer_id)
+    if not peer_id_str.startswith("-"):
+        return "user"
+    elif peer_id_str.startswith("-100"):
+        return "channel"
+    else:
+        return "chat"
+
+pyrogram.utils.get_peer_type = get_peer_type_new
+pyrogram.utils.MIN_CHANNEL_ID = -100999999999999
+pyrogram.utils.MIN_CHAT_ID = -99999999999999
+
 from config import DB_NAME
 from database.db import init_db
 from host_bot.bot import bot
