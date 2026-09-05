@@ -156,7 +156,16 @@ class HttpBot:
                     )
 
                 wait_msg = await self.send_message(chat_id, "⏳ در حال ارسال کد تایید به تلگرام شما...")
-                temp_client = Client(f"temp_{user_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+                temp_client = Client(
+    f"temp_{user_id}",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    device_model="Desktop",
+    system_version="Windows 10",
+    app_version="4.16.8 x64",
+    lang_code="en",
+    in_memory=True
+                )
                 
                 try:
                     await temp_client.connect()
