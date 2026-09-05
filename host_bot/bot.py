@@ -125,7 +125,7 @@ def add_system_log(text: str):
             if user_id in ACTIVE_CLIENTS:
                 ACTIVE_CLIENTS[user_id].settings = st
                 setattr(ACTIVE_CLIENTS[user_id], key, val)
-                def get_main_dashboard_kb(self, is_online, is_admin=False):
+    def get_main_dashboard_kb(self, is_online, is_admin=False):
         status_btn = "🟢 وضعیت سلف: روشن (کلیک برای خاموش)" if is_online else "🔴 وضعیت سلف: خاموش (کلیک برای روشن)"
         toggle_cb = "btn_turn_off" if is_online else "btn_turn_on"
         kb = [
