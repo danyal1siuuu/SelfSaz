@@ -47,7 +47,7 @@ def add_system_log(text: str):
     if len(SYSTEM_LOGS) > 60:
         SYSTEM_LOGS.pop(0)
         class HttpBot:
-    def __init__(self):
+            def __init__(self):
         self.running = False
 
     async def send_message(self, chat_id, text, reply_markup=None):
