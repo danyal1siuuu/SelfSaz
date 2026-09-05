@@ -470,26 +470,60 @@ class HttpBot:
                 else:
                     return await self.send_message(chat_id, "❌ کد استرینگ سشن ارسالی نامعتبر یا خیلی کوتاه است.")
 
-            # دانلود یوتیوب درون بات
+# دانلود یوتیوب درون بات با لیمیت رتبه و فرمت تصحیح‌شده
             elif USER_STATES.get(user_id) == "WAITING_YOUTUBE":
                 USER_STATES.pop(user_id, None)
                 if "http" in text and ("youtube.com" in text or "youtu.be" in text):
-                    await self.send_message(chat_id, "⏳ در حال پردازش و استخراج ویدیو از یوتیوب...")
-                    opts = {'format': 'best[ext=mp4]/best', 'outtmpl': f'downloads/yt_{user_id}_%(id)s.%(ext)s', 'max_filesize': 45 * 1024 * 1024}
+                    from core.plans import get_user_yt_limit_mb
+                    max_mb = await get_user_yt_limit_mb(user_id)
+                    max_bytes = max_mb * 1024 * 1024
+
+                    await self.send_message(chat_id, f"⏳ در حال پردازش ویدیو یوتیوب... (سقف مجاز رتبه شما: {max_mb} MB)")
+                    
+                    opts = {
+                        'format': 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b',
+                        'outtmpl': f'downloads/yt_{user_id}_%(id)s.%(ext)s',
+                        'merge_output_format': 'mp4',
+                        'max_filesize': max_bytes,
+                        'quiet': True,
+                        'no_warnings': True
+                    }
                     try:
                         with yt_dlp.YoutubeDL(opts) as ydl:
                             info = ydl.extract_info(text, download=True)
-                            fname = ydl.prepare_filename(info)
-                        await self.send_message(chat_id, "📤 دانلود انجام شد؛ در حال آپلود ویدیو...")
-                        await self.send_video_file(chat_id, fname, caption=f"🎬 **{info.get('title', 'YouTube Video')}**")
-                        if os.path.exists(fname):
-                            os.remove(fname)
+                            title = info.get('title', 'YouTube Video')
+
+                        import glob
+                        found_files = glob.glob(f"downloads/yt_{user_id}_*")
+                        if found_files:
+                            fname = found_files[0]
+                            f_size_mb = os.path.getsize(fname) // (1024 * 1024)
+                            
+                            # ربات‌های تلگرام معمولی از طریق API فقط تا ۵۰ مگابایت اجازه ارسال دارند
+                            if f_size_mb > 50:
+                                await self.send_message(
+                                    chat_id, 
+                                    f"⚠️ حجم فایل ({f_size_mb} MB) است. بات‌های رسمی تلگرام فایل بیشتر از ۵۰ مگابایت را مستقیم ارسال نمی‌کنند.\n"
+                                    f"💡 **پیشنهاد:** لینک را مستقیماً با دستور `.yt {text}` در پیوی یا گروه توسط خود اکانت سلف ارسال کنید تا تا سقف ۲ گیگابایت برای شما آپلود شود!"
+                                )
+                            else:
+                                await self.send_message(chat_id, "📤 دانلود انجام شد؛ در حال ارسال...")
+                                await self.send_video_file(chat_id, fname, caption=f"🎬 **{title}**\n📦 حجم: `{f_size_mb} MB`")
+                            
+                            for f in found_files:
+                                if os.path.exists(f):
+                                    os.remove(f)
+                        else:
+                            await self.send_message(chat_id, "❌ فایلی برای ارسال یافت نشد.")
                     except Exception as e:
-                        await self.send_message(chat_id, f"❌ خطا در پردازش یوتیوب:\n`{e}`")
+                        err_str = str(e)
+                        if "File is larger than max-filesize" in err_str:
+                            await self.send_message(chat_id, f"❌ حجم این ویدیو بیشتر از سقف رتبه شما ({max_mb} مگابایت) است! برای افزایش سقف، پلن خود را ارتقا دهید.")
+                        else:
+                            await self.send_message(chat_id, f"❌ خطا در پردازش یوتیوب:\n`{err_str}`")
                 else:
                     await self.send_message(chat_id, "❌ لینک ارسالی نامعتبر است.")
                 return
-
             # استیت‌های متنی ادمین
             if is_admin:
                 if USER_STATES.get(user_id) == "AD_WAIT_BROADCAST":
