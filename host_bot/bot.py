@@ -6,7 +6,7 @@ from config import BOT_TOKEN, DB_NAME
 from core.manager import start_single_client, stop_single_client, ACTIVE_CLIENTS
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-CHANNEL_URL = "https://t.me/YourChannelUsername"
+CHANNEL_URL = "https://t.me/Vip_Viro"
 
 USER_STATES = {}
 
