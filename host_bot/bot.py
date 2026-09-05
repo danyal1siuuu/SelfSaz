@@ -65,12 +65,12 @@ class HttpBot:
                 kb = {
                     "inline_keyboard": [
                         [{"text": "⚡️ ساخت سلف در چند ثانیه", "callback_data": "make"}],
-                        [{"text": "📢 کانال رسمی", "url": "https://t.me/TeleBotCraft"}]
+                        [{"text": "📢 کانال رسمی", "url": "https://t.me/Vip_Viro"}]
                     ]
                 }
                 await self.send_message(
                     chat_id,
-                    "👑 **به سامانه سلف‌ساز جامع TeleBotCraft خوش آمدید!**\nبرای راه‌اندازی سلف روی دکمه زیر کلیک کنید:",
+                    "👑 **به سامانه سلف‌ساز جامع VipViro خوش آمدید!**\nبرای راه‌اندازی سلف روی دکمه زیر کلیک کنید:",
                     reply_markup=kb
                 )
             elif text and not text.startswith("/"):
