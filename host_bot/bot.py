@@ -10,7 +10,14 @@ import sys
 from datetime import datetime
 import pytz
 import yt_dlp
-from config import BOT_TOKEN, DB_NAME, ADMIN_ID
+
+from pyrogram import Client as PyroClient
+from pyrogram.errors import (
+    SessionPasswordNeeded, PhoneCodeInvalid, PhoneCodeExpired,
+    PhoneNumberInvalid, PasswordHashInvalid
+)
+
+from config import BOT_TOKEN, DB_NAME, ADMIN_ID, API_ID, API_HASH
 from core.manager import (
     start_single_client, stop_single_client, ACTIVE_CLIENTS, 
     timename_loop, restore_original_name, stop_all_clients, 
@@ -21,9 +28,10 @@ from plugins.fun_crypto import fetch_live_market_data, format_market_display
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 CHANNEL_URL = "https://t.me/Vip_Viro"
 
-# متغیرها و وضعیت‌های سیستم
+# متغیرها و وضعیت‌های فعال سیستم
 USER_STATES = {}
 TARGET_USER_ADMIN = {}
+LOGIN_CLIENTS = {}
 REGISTRATION_OPEN = True
 GLOBAL_MAINTENANCE = False
 LOG_DELETED_MSGS = True
@@ -38,8 +46,7 @@ def add_system_log(text: str):
     SYSTEM_LOGS.append(f"[{t}] {text}")
     if len(SYSTEM_LOGS) > 60:
         SYSTEM_LOGS.pop(0)
-
-class HttpBot:
+        class HttpBot:
     def __init__(self):
         self.running = False
 
@@ -118,8 +125,7 @@ class HttpBot:
             if user_id in ACTIVE_CLIENTS:
                 ACTIVE_CLIENTS[user_id].settings = st
                 setattr(ACTIVE_CLIENTS[user_id], key, val)
-
-    def get_main_dashboard_kb(self, is_online, is_admin=False):
+                def get_main_dashboard_kb(self, is_online, is_admin=False):
         status_btn = "🟢 وضعیت سلف: روشن (کلیک برای خاموش)" if is_online else "🔴 وضعیت سلف: خاموش (کلیک برای روشن)"
         toggle_cb = "btn_turn_off" if is_online else "btn_turn_on"
         kb = [
@@ -134,7 +140,6 @@ class HttpBot:
         kb.append([{"text": "🛑 خروج و حذف اطلاعات", "callback_data": "btn_delete_account"}, {"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}])
         return {"inline_keyboard": kb}
 
-    # ------------------ کیبوردهای سوپر پنل ادمین (۶۵ قابلیت) ------------------
     def get_admin_hub_kb(self):
         kb = [
             [{"text": "⚙️ ۱. کنترل سرور و پروسه‌ها (۱۰)", "callback_data": "ad_sec_1"}, {"text": "🗄 ۲. مدیریت دیتابیس و فایل (۸)", "callback_data": "ad_sec_2"}],
@@ -146,7 +151,6 @@ class HttpBot:
         return {"inline_keyboard": kb}
 
     def get_admin_sec1_kb(self):
-        # بخش ۱: کنترل سرور و هسته (۱۰ قابلیت)
         return {"inline_keyboard": [
             [{"text": "۱. خاموش‌سازی همه سلف‌ها 🛑", "callback_data": "ad_stop_all"}, {"text": "۲. ریستارت همه سلف‌ها 🔄", "callback_data": "ad_restart_all"}],
             [{"text": "۳. پاکسازی کش و فایلهای موقت 🧹", "callback_data": "ad_clean_temp"}, {"text": "۴. تست سرعت و پینگ سرور ⚡️", "callback_data": "ad_ping_test"}],
@@ -157,7 +161,6 @@ class HttpBot:
         ]}
 
     def get_admin_sec2_kb(self):
-        # بخش ۲: مدیریت دیتابیس و فایل‌ها (۸ قابلیت)
         return {"inline_keyboard": [
             [{"text": "۱۱. دانلود نسخه پشتیبان دیتابیس 📥", "callback_data": "ad_backup_db"}, {"text": "۱۲. بهینه‌سازی دیتابیس (Vacuum) 🛠", "callback_data": "ad_vacuum_db"}],
             [{"text": "۱۳. حذف سشن‌های خراب و منقضی 🗑", "callback_data": "ad_clean_broken_sessions"}, {"text": "۱۴. پاکسازی لاگ‌های قدیمی سیستم 🧽", "callback_data": "ad_clear_old_logs"}],
@@ -167,7 +170,6 @@ class HttpBot:
         ]}
 
     def get_admin_sec3_kb(self):
-        # بخش ۳: آمار و مانیتورینگ زنده (۸ قابلیت)
         return {"inline_keyboard": [
             [{"text": "۱۹. لاگ زنده سیستم (۶۰ پیام اخیر) 📜", "callback_data": "ad_live_logs"}, {"text": "۲۰. آمار جامع دیتابیس و کاربران 📈", "callback_data": "ad_full_stats"}],
             [{"text": "۲۱. تعداد سلف‌های VIP فعال 💎", "callback_data": "ad_count_vips"}, {"text": "۲۲. مصرف کل منابع سرور 📊", "callback_data": "ad_sys_resources"}],
@@ -177,7 +179,6 @@ class HttpBot:
         ]}
 
     def get_admin_sec4_kb(self):
-        # بخش ۴: مدیریت کاربران و سلف‌ها (۱۰ قابلیت)
         return {"inline_keyboard": [
             [{"text": "۲۷. جستجوی کاربر با آیدی 🔎", "callback_data": "ad_find_user"}, {"text": "۲۸. ارتقا کاربر به اکانت VIP 💎", "callback_data": "ad_grant_vip"}],
             [{"text": "۲۹. تنزیل رتبه از VIP 🚫", "callback_data": "ad_revoke_vip"}, {"text": "۳۰. افزودن سکه به کاربر 💰", "callback_data": "ad_add_coins"}],
@@ -188,7 +189,6 @@ class HttpBot:
         ]}
 
     def get_admin_sec5_kb(self):
-        # بخش ۵: امنیت و فایروال سیستم (۸ قابلیت)
         reg_btn = "۳۷. ثبت‌نام جدید: باز ✅" if REGISTRATION_OPEN else "۳۷. ثبت‌نام جدید: قفل 🔒"
         maint_btn = "۳۸. حالت تعمیرات: روشن 🔴" if GLOBAL_MAINTENANCE else "۳۸. حالت تعمیرات: خاموش 🟢"
         spam_btn = "۳۹. آنتی‌اسپم سیستم: فعال 🛡" if ANTI_SPAM_PROTECT else "۳۹. آنتی‌اسپم سیستم: خاموش ⚠️"
@@ -201,7 +201,6 @@ class HttpBot:
         ]}
 
     def get_admin_sec6_kb(self):
-        # بخش ۶: تنظیمات پلاگین‌های سلف (۱۱ قابلیت)
         del_log_btn = "۴۵. لاگر حذف پیام: فعال ✅" if LOG_DELETED_MSGS else "۴۵. لاگر حذف پیام: خاموش ❌"
         return {"inline_keyboard": [
             [{"text": del_log_btn, "callback_data": "ad_toggle_del_logger"}, {"text": "۴۶. خاموش کردن ساعت کل سلف‌ها ⏰", "callback_data": "ad_kill_all_timename"}],
@@ -214,7 +213,6 @@ class HttpBot:
         ]}
 
     def get_admin_sec7_kb(self):
-        # بخش ۷: پیام‌رسانی و پشتیبانی (۱۰ قابلیت)
         return {"inline_keyboard": [
             [{"text": "۵۶. ارسال همگانی به تمام کاربران 📢", "callback_data": "ad_broadcast_all"}, {"text": "۵۷. فوروارد همگانی به تمام کاربران 🔁", "callback_data": "ad_forward_all"}],
             [{"text": "۵۸. ارسال اطلاعیه به کاربران VIP 💎", "callback_data": "ad_broadcast_vip"}, {"text": "۵۹. پیام به دارندگان سلف روشن 🟢", "callback_data": "ad_broadcast_online"}],
@@ -223,8 +221,7 @@ class HttpBot:
             [{"text": "۶۴. استخراج لیست آیدی تمام کاربران 📝", "callback_data": "ad_export_user_ids"}, {"text": "۶۵. راهنمای کامل کدهای خطا ℹ️", "callback_data": "ad_error_guide"}],
             [{"text": "🔙 بازگشت به هاب ادمین", "callback_data": "admin_hub"}]
         ]}
-
-    async def start(self):
+        async def start(self):
         self.running = True
         offset = 0
         add_system_log("HTTP Bot service started successfully.")
@@ -275,149 +272,99 @@ class HttpBot:
                 else:
                     kb = {
                         "inline_keyboard": [
-                            [{"text": "🔑 اتصال اکانت (ارسال سشن)", "callback_data": "btn_submit_session"}],
+                            [
+                                {"text": "⚡️ ساخت و دریافت آنی سشن (شماره)", "callback_data": "btn_create_session"},
+                                {"text": "🔑 اتصال مستقیم (ارسال سشن)", "callback_data": "btn_submit_session"}
+                            ],
                             [{"text": "📢 کانال پشتیبانی و اخبار", "url": CHANNEL_URL}]
                         ]
                     }
-                    return await self.send_message(chat_id, "👋 **به سیستم پیشرفته سلف‌ساز خوش آمدید!**\n\nبرای راه‌اندازی و اتصال سلف روی دکمه زیر کلیک کرده و استرینگ سشن خود را ارسال فرمایید:", reply_markup=kb)
+                    return await self.send_message(chat_id, "👋 **به سیستم پیشرفته سلف‌ساز خوش آمدید!**\n\nبرای راه‌اندازی سلف، یکی از روش‌های فوق‌سریع زیر را انتخاب کنید:", reply_markup=kb)
 
             if text == "/admin" and is_admin:
                 USER_STATES.pop(user_id, None)
                 return await self.send_message(chat_id, "👑 **سوپر پنل اختصاصی مدیریت ادمین (۶۵ قابلیت مجزا)**\n\nیکی از بخش‌های زیر را انتخاب کنید:", reply_markup=self.get_admin_hub_kb())
 
-            # استیت افزودن دوست
-            if USER_STATES.get(user_id) == "WAITING_ADD_FRIEND":
-                USER_STATES.pop(user_id, None)
-                if text.isdigit():
-                    t_id = int(text)
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO relations (owner_id, target_id, type) VALUES (?, ?, 'friend')", (user_id, t_id))
-                        await db.commit()
-                    if user_id in ACTIVE_CLIENTS:
-                        if not hasattr(ACTIVE_CLIENTS[user_id], "friends_set"):
-                            ACTIVE_CLIENTS[user_id].friends_set = set()
-                        ACTIVE_CLIENTS[user_id].friends_set.add(t_id)
-                    return await self.send_message(chat_id, f"✅ کاربر با آیدی عددی `{t_id}` با موفقیت به **لیست دوستان** اضافه شد.")
-                else:
-                    return await self.send_message(chat_id, "❌ لطفاً فقط آیدی عددی کاربر (شناسه تلگرام) را ارسال کنید.")
+            # --- ۱. مرحله دریافت شماره تلفن برای ساخت آنی سشن ---
+            if USER_STATES.get(user_id) == "WAITING_PHONE":
+                phone = text.replace(" ", "").replace("-", "")
+                if not (phone.startswith("+") and phone[1:].isdigit() and len(phone) >= 10):
+                    return await self.send_message(chat_id, "❌ فرمت شماره نامعتبر است.\nلطفاً شماره را همراه با علامت + و کد کشور ارسال کنید:\nمثال: `+989123456789`")
 
-            # استیت افزودن دشمن
-            if USER_STATES.get(user_id) == "WAITING_ADD_ENEMY":
-                USER_STATES.pop(user_id, None)
-                if text.isdigit():
-                    t_id = int(text)
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO relations (owner_id, target_id, type) VALUES (?, ?, 'enemy')", (user_id, t_id))
-                        await db.commit()
-                    if user_id in ACTIVE_CLIENTS:
-                        if not hasattr(ACTIVE_CLIENTS[user_id], "enemies_set"):
-                            ACTIVE_CLIENTS[user_id].enemies_set = set()
-                        ACTIVE_CLIENTS[user_id].enemies_set.add(t_id)
-                    return await self.send_message(chat_id, f"🛡 کاربر با آیدی عددی `{t_id}` با موفقیت به **لیست دشمنان** اضافه شد.")
-                else:
-                    return await self.send_message(chat_id, "❌ لطفاً فقط آیدی عددی کاربر را ارسال کنید.")
-
-# استیت حذف تکی از روابط
-            if USER_STATES.get(user_id) == "WAITING_REMOVE_RELATION":
-                USER_STATES.pop(user_id, None)
-                if text.isdigit():
-                    t_id = int(text)
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("DELETE FROM relations WHERE owner_id = ? AND target_id = ?", (user_id, t_id))
-                        await db.commit()
-                    if user_id in ACTIVE_CLIENTS:
-                        if hasattr(ACTIVE_CLIENTS[user_id], "friends_set"):
-                            ACTIVE_CLIENTS[user_id].friends_set.discard(t_id)
-                        if hasattr(ACTIVE_CLIENTS[user_id], "enemies_set"):
-                            ACTIVE_CLIENTS[user_id].enemies_set.discard(t_id)
-                    return await self.send_message(chat_id, f"🗑 کاربر `{t_id}` از لیست روابط شما حذف شد.")
-                else:
-                    return await self.send_message(chat_id, "❌ آیدی عددی نامعتبر است.")
-
-            # استیت تغییر پیشوند توسط کاربر
-            if USER_STATES.get(user_id) == "WAITING_NEW_PREFIX":
-                USER_STATES.pop(user_id, None)
-                new_pref = text.strip()
-                if len(new_pref) > 3:
-                    return await self.send_message(chat_id, "❌ پیشوند نمی‌تواند بیش از ۳ کاراکتر باشد.")
-                async with aiosqlite.connect(DB_NAME) as db:
-                    await db.execute("UPDATE users SET prefix = ? WHERE user_id = ?", (new_pref, user_id))
-                    await db.commit()
-                if user_id in ACTIVE_CLIENTS:
-                    ACTIVE_CLIENTS[user_id].custom_prefix = new_pref
-                return await self.send_message(chat_id, f"⚡️ پیشوند دستورات سلف با موفقیت به `{new_pref}` تغییر یافت.")
-
-            # استیت دریافت سشن
-            if USER_STATES.get(user_id) == "WAITING_SESSION":
-                if not REGISTRATION_OPEN and not is_admin:
-                    USER_STATES.pop(user_id, None)
-                    return await self.send_message(chat_id, "🔒 ثبت‌نام و راه‌اندازی سلف جدید در حال حاضر بسته است.")
-                if len(ACTIVE_CLIENTS) >= MAX_ALLOWED_SELFS and not is_admin:
-                    USER_STATES.pop(user_id, None)
-                    return await self.send_message(chat_id, f"⚠️ سقف مجاز سلف‌های فعال سرور ({MAX_ALLOWED_SELFS}) تکمیل است.")
-
-                if len(text) > 40:
-                    await self.send_message(chat_id, "⏳ در حال بررسی سشن و راه‌اندازی آنی سلف...")
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string, coins, prefix, prefix_enabled, settings) VALUES (?, ?, 100, '.', 1, '{}')", (user_id, text))
-                        await db.commit()
-
-                    started, err = await start_single_client(user_id, text)
-                    USER_STATES.pop(user_id, None)
-
-                    if started:
-                        add_system_log(f"New self started for user {user_id}")
-                        await self.send_message(chat_id, "🎉 **سلف شما با موفقیت روشن شد!**\nهم‌اکنون تمام ویژگی‌ها از طریق پنل زیر در دسترس هستند:", reply_markup=self.get_main_dashboard_kb(True, is_admin))
-                    else:
-                        await self.send_message(chat_id, f"❌ خطا در روشن شدن سلف:\n`{err}`\n\nلطفاً از سلامت و معتبر بودن استرینگ سشن اطمینان حاصل فرمایید.")
-                else:
-                    await self.send_message(chat_id, "❌ استرینگ سشن ارسالی نامعتبر یا خیلی کوتاه است.")
-                return
-
-            # استیت دانلود یوتیوب داخل بات
-            if USER_STATES.get(user_id) == "WAITING_YOUTUBE":
-                USER_STATES.pop(user_id, None)
-                if "http" in text and ("youtube.com" in text or "youtu.be" in text):
-                    await self.send_message(chat_id, "⏳ در حال پردازش و دریافت ویدیو از یوتیوب...")
-                    opts = {
-                        'format': 'best[ext=mp4]/best',
-                        'outtmpl': f'downloads/yt_{user_id}_%(id)s.%(ext)s',
-                        'max_filesize': 45 * 1024 * 1024
-                    }
+                if user_id in LOGIN_CLIENTS:
                     try:
-                        with yt_dlp.YoutubeDL(opts) as ydl:
-                            info = ydl.extract_info(text, download=True)
-                            fname = ydl.prepare_filename(info)
-                        await self.send_message(chat_id, "📤 ویدیو با موفقیت دانلود شد؛ در حال ارسال...")
-                        await self.send_video_file(chat_id, fname, caption=f"🎬 **{info.get('title', 'YouTube Video')}**")
-                        if os.path.exists(fname):
-                            os.remove(fname)
-                    except Exception as e:
-                        await self.send_message(chat_id, f"❌ خطا در فرآیند دانلود یوتیوب:\n`{e}`")
-                else:
-                    await self.send_message(chat_id, "❌ آدرس ارسالی، لینک معتبر یوتیوب نیست.")
-                return
+                        await LOGIN_CLIENTS[user_id]["client"].disconnect()
+                    except Exception:
+                        pass
+                    LOGIN_CLIENTS.pop(user_id, None)
 
-            # استیت‌های مربوط به پنل ادمین
-            if is_admin:
-                if USER_STATES.get(user_id) == "AD_WAIT_BROADCAST":
+                await self.send_message(chat_id, "⏳ در حال اتصال به تلگرام و ارسال کد تایید...")
+                try:
+                    temp_cli = PyroClient(
+                        name=f":memory:{user_id}",
+                        api_id=API_ID,
+                        api_hash=API_HASH,
+                        in_memory=True
+                    )
+                    await temp_cli.connect()
+                    code_data = await temp_cli.send_code(phone)
+                    LOGIN_CLIENTS[user_id] = {
+                        "client": temp_cli,
+                        "phone": phone,
+                        "phone_code_hash": code_data.phone_code_hash
+                    }
+                    USER_STATES[user_id] = "WAITING_LOGIN_CODE"
+                    kb_cancel = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "btn_cancel_login"}]]}
+                    return await self.send_message(chat_id, f"📩 کد تایید ۵ رقمی به تلگرام شماره `{phone}` ارسال شد.\n\n⚠️ **نکته:** کد را با فاصله بین اعداد بفرستید (مثال: `1 2 3 4 5`):", reply_markup=kb_cancel)
+                except PhoneNumberInvalid:
+                    return await self.send_message(chat_id, "❌ شماره تلفن وارد شده نامعتبر یا ثبت‌نشده در تلگرام است.")
+                except Exception as e:
+                    return await self.send_message(chat_id, f"❌ خطا در ارسال کد ورود:\n`{e}`")
+
+            # --- ۲. مرحله دریافت کد ۵ رقمی تلگرام ---
+            elif USER_STATES.get(user_id) == "WAITING_LOGIN_CODE":
+                code = text.replace(" ", "").replace("-", "").strip()
+                if not code.isdigit():
+                    return await self.send_message(chat_id, "❌ کد ارسالی باید فقط شامل عدد باشد.")
+
+                data = LOGIN_CLIENTS.get(user_id)
+                if not data:
                     USER_STATES.pop(user_id, None)
-                    await self.send_message(chat_id, "⏳ ارسال همگانی آغاز شد...")
-                    cnt = 0
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        cursor = await db.execute("SELECT user_id FROM users")
-                        rows = await cursor.fetchall()
-                    for r in rows:
-                        try:
-                            await self.send_message(r[0], f"📢 **اطلاعیه رسمی سیستم:**\n\n{text}")
-                            cnt += 1
-                            await asyncio.sleep(0.08)
-                        except Exception:
-                            pass
-                    add_system_log(f"Admin broadcasted message to {cnt} users.")
-                    return await self.send_message(chat_id, f"✅ پیام به {cnt} کاربر ارسال گردید.")
+                    return await self.send_message(chat_id, "❌ نشست ورود منقضی شد. لطفاً دوباره تلاش کنید.")
 
-                elif USER_STATES.get(user_id) == "AD_WAIT_FIND_USER":
+                cli = data["client"]
+                await self.send_message(chat_id, "⏳ در حال بررسی کد ورود...")
+                try:
+                    await cli.sign_in(data["phone"], data["phone_code_hash"], code)
+                    sess_str = await cli.export_session_string()
+                    await cli.disconnect()
+                    LOGIN_CLIENTS.pop(user_id, None)
+                    USER_STATES.pop(user_id, None)
+
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string, coins, prefix, prefix_enabled, settings) VALUES (?, ?, 100, '.', 1, '{}')", (user_id, sess_str))
+                        await db.commit()
+
+                    await start_single_client(user_id, sess_str)
+                    add_system_log(f"User {user_id} auto-created session & launched selfbot.")
+
+                    msg_done = (
+                        "🎉 **اکانت متصل و سلف شما با موفقیت روشن شد!**\n\n"
+                        "🔑 **کد استرینگ سشن اختصاصی شما:**\n"
+                        f"`{sess_str}`\n\n"
+                        "👇 کنترل تمام قابلیت‌ها از داشبورد زیر:"
+                    )
+                    return await self.send_message(chat_id, msg_done, reply_markup=self.get_main_dashboard_kb(True, is_admin))
+
+                except SessionPasswordNeeded:
+                    USER_STATES[user_id] = "WAITING_LOGIN_2FA"
+                    kb_cancel = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "btn_cancel_login"}]]}
+                    return await self.send_message(chat_id, "🔐 اکانت شما دارای **تایید دومرحله‌ای (2FA)** است.\nلطفاً رمز عبور دومرحله‌ای اکانت خود را بفرستید:", reply_markup=kb_cancel)
+                except (PhoneCodeInvalid, PhoneCodeExpired):
+                    return await self.send_message(chat_id, "❌ کد وارد شده نادرست یا منقضی است. دوباره بررسی کنید.")
+                except Exception as e:
+                    return await self.send_message(chat_id, f"❌ خطا در بررسی کد:\n`{e}`")
+                    elif USER_STATES.get(user_id) == "AD_WAIT_FIND_USER":
                     USER_STATES.pop(user_id, None)
                     if text.isdigit():
                         t_uid = int(text)
@@ -484,32 +431,61 @@ class HttpBot:
             data = cq.get("data", "")
             is_admin = (user_id == ADMIN_ID)
 
-            # چک اعتبارسنجی کاربر
-            allowed_unreg = ["btn_submit_session", "back_dashboard"]
+            allowed_unreg = ["btn_create_session", "btn_cancel_login", "btn_submit_session", "back_dashboard"]
             if not is_admin and not data.startswith("ad_") and data not in allowed_unreg:
                 u_chk = await self.get_user_db(user_id)
                 if not u_chk:
                     await self.answer_callback(cq["id"], "❌ سلف شما ثبت نشده یا حذف شده است!", alert=True)
-                    kb_reconnect = {"inline_keyboard": [[{"text": "🔑 اتصال مجدد سلف", "callback_data": "btn_submit_session"}]]}
-                    return await self.edit_message(chat_id, msg_id, "🛑 اطلاعات شما یافت نشد. جهت اتصال دوباره روی دکمه زیر بزنید:", reply_markup=kb_reconnect)
+                    kb_reconnect = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "⚡️ ساخت و دریافت آنی سشن", "callback_data": "btn_create_session"},
+                                {"text": "🔑 اتصال مستقیم (ارسال سشن)", "callback_data": "btn_submit_session"}
+                            ]
+                        ]
+                    }
+                    return await self.edit_message(chat_id, msg_id, "🛑 اطلاعات شما یافت نشد. جهت اتصال دوباره یکی از روش‌های زیر را بزنید:", reply_markup=kb_reconnect)
 
-            # اتصال سشن
-            if data == "btn_submit_session":
+            # دکمه ورود و ساخت خودکار سشن با شماره
+            if data == "btn_create_session":
+                if not REGISTRATION_OPEN and not is_admin:
+                    return await self.answer_callback(cq["id"], "🔒 ثبت‌نام کاربران جدید موقتاً بسته است.", alert=True)
+                
+                USER_STATES[user_id] = "WAITING_PHONE"
+                kb = {"inline_keyboard": [[{"text": "🔙 انصراف و بازگشت", "callback_data": "btn_cancel_login"}]]}
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(
+                    chat_id, msg_id, 
+                    "📱 **ورود مستقیم و استخراج آنی سشن:**\n\n"
+                    "لطفاً شماره موبایل اکانت خود را همراه با کد کشور ارسال کنید:\n"
+                    "مثال: `+989123456789`", 
+                    reply_markup=kb
+                )
+
+            elif data == "btn_cancel_login":
+                USER_STATES.pop(user_id, None)
+                if user_id in LOGIN_CLIENTS:
+                    try:
+                        await LOGIN_CLIENTS[user_id]["client"].disconnect()
+                    except Exception:
+                        pass
+                    LOGIN_CLIENTS.pop(user_id, None)
+                await self.answer_callback(cq["id"], "عملیات ورود لغو شد.")
+                return await self.handle_update({"message": {"chat": {"id": chat_id}, "from": {"id": user_id}, "text": "/start"}})
+
+            elif data == "btn_submit_session":
                 USER_STATES[user_id] = "WAITING_SESSION"
                 kb = {"inline_keyboard": [[{"text": "🔙 انصراف و بازگشت", "callback_data": "back_dashboard"}]]}
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, "📱 **لطفاً کد استرینگ سشن (String Session) اکانت خود را بفرستید:**", reply_markup=kb)
 
-            # برگشت به داشبورد اصلی
             elif data == "back_dashboard":
                 USER_STATES.pop(user_id, None)
                 is_online = user_id in ACTIVE_CLIENTS
-                u = await self.get_user_db(user_id)
                 txt = "👑 **داشبورد مدیریت یکپارچه سلف‌بات**\nگزینه مورد نظر خود را انتخاب فرمایید:"
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=self.get_main_dashboard_kb(is_online, is_admin))
 
-            # روشن و خاموش کردن سلف
             elif data == "btn_turn_off":
                 await stop_single_client(user_id)
                 add_system_log(f"Self {user_id} stopped by user.")
@@ -544,10 +520,16 @@ class HttpBot:
                     await db.commit()
                 add_system_log(f"User {user_id} deleted account.")
                 await self.answer_callback(cq["id"], "اکانت و تنظیمات شما با موفقیت حذف گردید.", alert=True)
-                kb = {"inline_keyboard": [[{"text": "🔑 اتصال مجدد سلف", "callback_data": "btn_submit_session"}]]}
+                kb = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "⚡️ ساخت و دریافت آنی سشن", "callback_data": "btn_create_session"},
+                            {"text": "🔑 اتصال مستقیم (ارسال سشن)", "callback_data": "btn_submit_session"}
+                        ]
+                    ]
+                }
                 return await self.edit_message(chat_id, msg_id, "🛑 سلف شما حذف و خاموش گردید.", reply_markup=kb)
-
-            # ================== بخش کاملاً پیشرفته مدیریت دوستان و دشمنان ==================
+                # ================== بخش کاملاً پیشرفته مدیریت دوستان و دشمنان ==================
             elif data == "menu_relations":
                 async with aiosqlite.connect(DB_NAME) as db:
                     c_f = await db.execute("SELECT COUNT(*) FROM relations WHERE owner_id = ? AND type = 'friend'", (user_id,))
@@ -560,15 +542,15 @@ class HttpBot:
                     "━━━━━━━━━━━━━━━━━━━━━\n"
                     f"❤️ تعداد دوستان ویژه: `{friends_count}` نفر\n"
                     f"⚔️ تعداد دشمنان ثبت شده: `{enemies_count}` نفر\n\n"
-                    "⚙️ **توضیحات عملکرد خودکار:**\n"
-                    "• **دشمنان:** به محض ارسال پیام توسط دشمن، سلف به طور خودکار پاسخ تحقیرآمیز و دندان‌شکن ارسال می‌کند!\n"
-                    "• **دوستان:** معاف از پاسخ منشی، همراه با خوش‌آمدگویی و پاسخ احترام‌آمیز اختصاصی.\n"
+                    "⚙️ **عملکرد خودکار:**\n"
+                    "• **دشمنان:** ارسال فوری جواب‌های دندان‌شکن به محض پیام دادن دشمن!\n"
+                    "• **دوستان:** معاف از پاسخ منشی با متن اختصاصی و صمیمانه.\n"
                     "━━━━━━━━━━━━━━━━━━━━━\n"
                     "👇 عملیات مورد نظر خود را انتخاب کنید:"
                 )
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "📋 مشاهده لیست دوستان ❤️", "callback_data": "rel_list_friends"}, {"text": "📋 مشاهده لیست دشمنان ⚔️", "callback_data": "rel_list_enemies"}],
+                        [{"text": "📋 لیست دوستان ❤️", "callback_data": "rel_list_friends"}, {"text": "📋 لیست دشمنان ⚔️", "callback_data": "rel_list_enemies"}],
                         [{"text": "➕ افزودن به دوستان", "callback_data": "rel_add_friend"}, {"text": "➕ افزودن به دشمنان", "callback_data": "rel_add_enemy"}],
                         [{"text": "🗑 حذف کاربر با آیدی عددی", "callback_data": "rel_remove_user"}],
                         [{"text": " پاکسازی همه دوستان ❌", "callback_data": "rel_clear_friends"}, {"text": " پاکسازی همه دشمنان ❌", "callback_data": "rel_clear_enemies"}],
@@ -582,10 +564,7 @@ class HttpBot:
                 async with aiosqlite.connect(DB_NAME) as db:
                     cursor = await db.execute("SELECT target_id FROM relations WHERE owner_id = ? AND type = 'friend' LIMIT 30", (user_id,))
                     rows = await cursor.fetchall()
-                if not rows:
-                    res_txt = "❤️ **لیست دوستان شما در حال حاضر خالی است.**"
-                else:
-                    res_txt = "❤️ **لیست دوستان ویژه ثبت شده:**\n\n" + "\n".join([f"• شناسه: `{r[0]}`" for r in rows])
+                res_txt = "❤️ **لیست دوستان ویژه ثبت شده:**\n\n" + "\n".join([f"• شناسه: `{r[0]}`" for r in rows]) if rows else "❤️ **لیست دوستان شما در حال حاضر خالی است.**"
                 kb = {"inline_keyboard": [[{"text": "🔙 بازگشت به بخش روابط", "callback_data": "menu_relations"}]]}
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, res_txt, reply_markup=kb)
@@ -594,10 +573,7 @@ class HttpBot:
                 async with aiosqlite.connect(DB_NAME) as db:
                     cursor = await db.execute("SELECT target_id FROM relations WHERE owner_id = ? AND type = 'enemy' LIMIT 30", (user_id,))
                     rows = await cursor.fetchall()
-                if not rows:
-                    res_txt = "⚔️ **لیست دشمنان شما خالی است.**"
-                else:
-                    res_txt = "⚔️ **لیست دشمنان ثبت شده در رادار سلف:**\n\n" + "\n".join([f"• شناسه: `{r[0]}`" for r in rows])
+                res_txt = "⚔️ **لیست دشمنان ثبت شده:**\n\n" + "\n".join([f"• شناسه: `{r[0]}`" for r in rows]) if rows else "⚔️ **لیست دشمنان شما خالی است.**"
                 kb = {"inline_keyboard": [[{"text": "🔙 بازگشت به بخش روابط", "callback_data": "menu_relations"}]]}
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, res_txt, reply_markup=kb)
@@ -618,7 +594,7 @@ class HttpBot:
                 USER_STATES[user_id] = "WAITING_REMOVE_RELATION"
                 kb = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "menu_relations"}]]}
                 await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "🗑 **شناسه عددی کاربری که می‌خواهید از دوستان یا دشمنان حذف شود را بفرستید:**", reply_markup=kb)
+                return await self.edit_message(chat_id, msg_id, "🗑 **شناسه عددی کاربر مورد نظر برای حذف از روابط را ارسال فرمایید:**", reply_markup=kb)
 
             elif data == "rel_clear_friends":
                 async with aiosqlite.connect(DB_NAME) as db:
@@ -629,7 +605,7 @@ class HttpBot:
                 await self.answer_callback(cq["id"], "❤️ تمام لیست دوستان شما پاکسازی شد.", alert=True)
                 return await self.handle_update({"callback_query": {**cq, "data": "menu_relations"}})
 
-elif data == "rel_clear_enemies":
+            elif data == "rel_clear_enemies":
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute("DELETE FROM relations WHERE owner_id = ? AND type = 'enemy'", (user_id,))
                     await db.commit()
@@ -640,7 +616,7 @@ elif data == "rel_clear_enemies":
 
             # نرخ لحظه‌ای ارز
             elif data in ["menu_rates", "refresh_rates"]:
-                await self.answer_callback(cq["id"], "🔄 درحال دریافت نرخ لحظه‌ای...")
+                await self.answer_callback(cq["id"], "🔄 درحال دریافت آخرین نرخ‌ها...")
                 rates_data = await fetch_live_market_data()
                 market_text = format_market_display(rates_data)
                 kb = {
@@ -710,7 +686,7 @@ elif data == "rel_clear_enemies":
                     ]
                 }
                 await self.answer_callback(cq["id"])
-                txt = f"🤖 **تنظیمات منشی هوشمند سلف**\nوضعیت کنونی: `{'فعال 🟢' if m_on else 'غیرفعال 🔴'}`\n\nمنشی در صورت نبودن شما به پیام‌های پیوی پاسخ محترمانه ارسال می‌کند."
+                txt = f"🤖 **تنظیمات منشی هوشمند سلف**\nوضعیت کنونی: `{'فعال 🟢' if m_on else 'غیرفعال 🔴'}`\n\nمنشی در صورت آنلاین نبودن شما به پیام‌های پیوی پاسخ محترمانه ارسال می‌کند."
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
             elif data == "toggle_monshi":
@@ -810,8 +786,7 @@ elif data == "rel_clear_enemies":
                 kb = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "menu_tools"}]]}
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, "📹 **لینک ویدیوی یوتیوب را بفرستید تا با بالاترین سرعت دانلود شود:**", reply_markup=kb)
-
-            # ================== کنترل دکمه‌های ۶۵ گانه سوپر پنل ادمین ==================
+                # ================== کنترل دکمه‌های ۶۵ گانه سوپر پنل ادمین ==================
             elif data == "admin_hub" and is_admin:
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, "👑 **سوپر پنل مدیریت کل سیستم (۶۵ قابلیت تفکیک‌شده و فعال)**\nیکی از دسته‌بندی‌ها را انتخاب کنید:", reply_markup=self.get_admin_hub_kb())
@@ -844,7 +819,7 @@ elif data == "rel_clear_enemies":
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, "📢 **دسته ۷: پیام‌رسانی و مدیریت حامی (۱۰ قابلیت)**", reply_markup=self.get_admin_sec7_kb())
 
-            # اجرای عملیات قابلیت‌های بخش ۱
+            # اجرای قابلیت‌های دسته ۱
             elif data == "ad_stop_all" and is_admin:
                 cnt = await stop_all_clients()
                 add_system_log(f"Admin stopped all {cnt} clients.")
@@ -899,7 +874,7 @@ elif data == "rel_clear_enemies":
                 await self.answer_callback(cq["id"], "🖥 پردازش ربات در حال ری‌استارت است...", alert=True)
                 os.execv(sys.executable, ['python'] + sys.argv)
 
-            # بخش ۲: دیتابیس و فایل
+            # قابلیت‌های دسته ۲
             elif data == "ad_backup_db" and is_admin:
                 await self.answer_callback(cq["id"], "📥 در حال آماده‌سازی فایل پشتیبان دیتابیس...")
                 if os.path.exists(DB_NAME):
@@ -947,7 +922,7 @@ elif data == "rel_clear_enemies":
                     res = (await cur.fetchone())[0]
                 await self.answer_callback(cq["id"], f"🔍 نتیجه بررسی سلامت دیتابیس: {res}", alert=True)
 
-# بخش ۳: آمار و مانیتورینگ
+            # قابلیت‌های دسته ۳
             elif data == "ad_live_logs" and is_admin:
                 txt = "📜 **لاگ‌های زنده اخیر سیستم:**\n\n" + "\n".join(SYSTEM_LOGS[-25:]) if SYSTEM_LOGS else "📜 لاگی ثبت نشده است."
                 await self.send_message(chat_id, txt)
@@ -991,8 +966,7 @@ elif data == "rel_clear_enemies":
 
             elif data == "ad_error_rate" and is_admin:
                 await self.answer_callback(cq["id"], "⚠️ نرخ خطای شبکه زیر ۰.۱٪ است.", alert=True)
-
-            # بخش ۴: مدیریت کاربران
+                # قابلیت‌های دسته ۴
             elif data == "ad_find_user" and is_admin:
                 USER_STATES[user_id] = "AD_WAIT_FIND_USER"
                 await self.send_message(chat_id, "🔎 لطفاً شناسه عددی کاربر مورد نظر را بفرستید:")
@@ -1032,7 +1006,7 @@ elif data == "rel_clear_enemies":
             elif data == "ad_test_user_session" and is_admin:
                 await self.answer_callback(cq["id"], "🩺 بررسی اتصال سشن با موفقیت انجام شد.", alert=True)
 
-            # بخش ۵: امنیت و فایروال
+            # قابلیت‌های دسته ۵
             elif data == "ad_toggle_reg" and is_admin:
                 REGISTRATION_OPEN = not REGISTRATION_OPEN
                 add_system_log(f"Registration toggled to: {REGISTRATION_OPEN}")
@@ -1069,7 +1043,7 @@ elif data == "rel_clear_enemies":
                 GLOBAL_MAINTENANCE = True
                 await self.answer_callback(cq["id"], "🚨 حالت قفل اضطراری کل ربات فعال شد!", alert=True)
 
-            # بخش ۶: تنظیمات پلاگین‌های سلف
+            # قابلیت‌های دسته ۶
             elif data == "ad_toggle_del_logger" and is_admin:
                 LOG_DELETED_MSGS = not LOG_DELETED_MSGS
                 await self.answer_callback(cq["id"], f"لاگر حذف پیام: {'فعال ✅' if LOG_DELETED_MSGS else 'خاموش ❌'}", alert=True)
@@ -1134,7 +1108,7 @@ elif data == "rel_clear_enemies":
             elif data == "ad_reset_monshi_text" and is_admin:
                 await self.answer_callback(cq["id"], "📝 متن منشی هوشمند برای تمامی اکانت‌ها ریست شد.", alert=True)
 
-            # بخش ۷: پیام‌رسانی و پشتیبانی
+            # قابلیت‌های دسته ۷
             elif data == "ad_broadcast_all" and is_admin:
                 USER_STATES[user_id] = "AD_WAIT_BROADCAST"
                 await self.send_message(chat_id, "📢 متن پیام همگانی خود را ارسال فرمایید:")
