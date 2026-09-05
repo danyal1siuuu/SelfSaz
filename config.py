@@ -10,5 +10,5 @@ CHANNEL_LOG = int(os.getenv("CHANNEL_LOG", "0"))
 AI_API_KEY = os.getenv("AI_API_KEY", "")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
 
-DB_NAME = "database/selfsaz.db"
+DB_NAME = "data/selfsaz.db"
 DOWNLOAD_DIR = "downloads/"
