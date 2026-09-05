@@ -8,13 +8,13 @@ from core.filters import self_cmd
 @Client.on_message(self_cmd(["round", "ویدیو گرد", "تلسکوپ"]))
 async def video_note_creator(client: Client, message: Message):
     if not message.reply_to_message or not message.reply_to_message.video:
-        return await message.edit_text("❌ لطفا روی یک ویدیو ریپلای کنید.")
-    await message.edit_text("⏳ در حال تبدیل ویدیو به فرمت نوت دایره‌ای...")
+        return await message.edit_text("❌ لطفاً روی یک ویدیو ریپلای کنید.")
+    await message.edit_text("⏳ در حال تبدیل ویدیو به فرمت گرد (ویدیو نوت)...")
     raw = await message.reply_to_message.download()
-    out = "downloads/round_note.mp4"
+    out = f"downloads/round_{message.id}.mp4"
     cmd = [
         "ffmpeg", "-y", "-i", raw,
-        "-vf", "crop=min(iw\,ih):min(iw\,ih),scale=400:400",
+        "-vf", "crop=min(iw\\,ih):min(iw\\,ih),scale=400:400",
         "-c:v", "libx264", "-crf", "26", "-c:a", "aac",
         "-t", "60", out
     ]
@@ -23,8 +23,7 @@ async def video_note_creator(client: Client, message: Message):
         await client.send_video_note(message.chat.id, out)
         await message.delete()
     except Exception as e:
-        await message.edit_text(f"❌ خطا در پردازش با ffmpeg:
-`{e}`")
+        await message.edit_text(f"❌ خطا در پردازش با ffmpeg:\n`{e}`")
     finally:
         for f in [raw, out]:
             if os.path.exists(f):
