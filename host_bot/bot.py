@@ -16,34 +16,38 @@ from config import BOT_TOKEN, DB_NAME, API_ID, API_HASH
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# مدیریت وضعیت ورود کاربران
+# 👈 لینک کانال خود را اینجا بگذارید (اگر کانال ندارید، بگذارید https://t.me)
+CHANNEL_URL = "https://t.me/Vip_Viro"
+
 USER_STATES = {}
 USER_AUTH_DATA = {}
 
 SESSION_HELP_TEXT = """
-🔐 **راهنمای استرینگ سشن (String Session)**
+🔐 **راهنمای جامع ساخت سلف و ورود امن**
 
 ━━━━━━━━━━━━━━━━━━━━━
 ❓ **استرینگ سشن چیست؟**
-یک کلید رمزنگاری‌شده استاندارد است که به ربات سلف‌ساز اجازه می‌دهد بدون نیاز به دریافت پسورد شما، ابزارهای اتوماسیون (ساعت متحرک، ضدادیت، دانلودرها و...) را روی اکانتتان اجرا کند.
+یک کلید رمزنگاری‌شده استاندارد است که به ربات سلف‌ساز اجازه می‌دهد بدون نیاز به افشای رمز اصلی شما، قابلیت‌های پیشرفته (ساعت متحرک، ضدادیت، دانلودرها و...) را روی اکانتتان فعال کند.
 
 ━━━━━━━━━━━━━━━━━━━━━
-✨ **روش‌های اتصال به سلف‌ساز:**
+🚀 **مراحل راه‌اندازی (۱۰۰٪ داخل همین ربات):**
 
-1️⃣ **روش آسان (ورود مستقیم با شماره):**
-روی دکمه «⚡️ ورود خودکار با شماره تلفن» کلیک کنید و مراحل را مستقیماً داخل همین چت طی کنید.
+1️⃣ روی دکمه **«⚡️ ورود خودکار با شماره تلفن»** در منوی اصلی بزنید.
 
-2️⃣ **روش دستی (ربات‌های دیگر):**
-اگر از قبل سشن دارید یا می‌خواهید از بیرون بگیرید:
-• @SessionStringBot
-• @StringFatherBot
-کد تولیدشده را کپی کرده و با دکمه «🔑 ورود دستی با سشن» بفرستید.
+2️⃣ شماره تلفن خود را با پیش‌شماره کشور بفرستید (مثلاً: `+989123456789`).
+
+3️⃣ کد ۵ رقمی که تلگرام برایتان ارسال می‌کند را وارد کنید.
+
+4️⃣ در صورتی که اکانت شما تایید دو مرحله‌ای (2FA) دارد، رمز عبورتان را وارد کنید.
+
+5️⃣ کار تمام است! سلف‌بات شما فوراً فعال شده و یک نسخه از کد سشن نیز جهت بکاپ به شما تحویل داده می‌شود.
 
 ━━━━━━━━━━━━━━━━━━━━━
 🛡 **امنیت و حریم خصوصی:**
-هر زمان تمایل داشتید می‌توانید دسترسی را از مسیر:
+• تمامی سشن‌ها به صورت رمزگذاری‌شده روی سرور امن نگهداری می‌شوند.
+• هر زمان تمایل داشته باشید، می‌توانید از بخش:
 `Settings > Devices (دستگاه‌های فعال)`
-در تلگرام خود با یک لمس قطع کنید.
+در تلگرام خود با یک کلیک دسترسی سلف‌ساز را قطع کنید.
 """
 
 class HttpBot:
@@ -127,16 +131,16 @@ class HttpBot:
                 await self.cleanup_user(user_id)
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "⚡️ ورود خودکار با شماره تلفن (پیشنهادی)", "callback_data": "auth_direct"}],
+                        [{"text": "⚡️ ورود خودکار با شماره تلفن (سریع)", "callback_data": "auth_direct"}],
                         [{"text": "🔑 ورود دستی با استرینگ سشن", "callback_data": "auth_manual"}],
                         [{"text": "📖 راهنما و امنیت سلف", "callback_data": "help_session"}],
-                        [{"text": "📢 کانال پشتیبانی", "url": "https://t.me/Vip_Viro"}]
+                        [{"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
                     ]
                 }
                 welcome = (
-                    "👑 **به سامانه هوشمند و یکپارچه سلف‌ساز خوش آمدید!**\n\n"
-                    "با این سیستم می‌توانید بدون نیاز به هیچ برنامه یا ربات دیگری، اکانت خود را مستقیماً به ابزارهای هوشمند مجهز کنید.\n\n"
-                    "👇 لطفاً یکی از گزینه‌های زیر را جهت فعال‌سازی انتخاب کنید:"
+                    "👑 **به سامانه هوشمند و اختصاصی سلف‌ساز خوش آمدید!**\n\n"
+                    "با این سیستم می‌توانید بدون نیاز به هیچ برنامه یا ربات دیگر، اکانت خود را مستقیماً به امکانات پیشرفته مجهز کنید.\n\n"
+                    "👇 لطفاً یکی از گزینه‌های زیر را انتخاب نمایید:"
                 )
                 return await self.send_message(chat_id, welcome, reply_markup=kb)
 
@@ -168,17 +172,17 @@ class HttpBot:
                     prompt = (
                         f"📩 **کد تایید به تلگرام شماره `{clean_phone}` ارسال شد!**\n\n"
                         "⚠️ **نکته امنیتی بسیار مهم:**\n"
-                        "برای اینکه تلگرام اجازه ارسال بدهد، کد را به صورت **فاصله‌دار** بفرستید.\n"
-                        "مثال: اگر کد شما `54321` است، بفرستید: `5 4 3 2 1`"
+                        "برای اینکه تلگرام پیام شما را بلاک نکند، کد را به صورت **فاصله‌دار** ارسال کنید.\n"
+                        "مثال: اگر کد دریافتی شما `54321` است، بفرستید: `5 4 3 2 1`"
                     )
                     return await self.send_message(chat_id, prompt, reply_markup=kb)
 
                 except FloodWait as e:
                     await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, f"⚠️ تلگرام به دلیل درخواست‌های مکرر شما را محدود کرده است. لطفاً `{e.value}` ثانیه صبر کنید.")
+                    return await self.send_message(chat_id, f"⚠️ تلگرام به دلیل تلاش‌های مکرر شما را محدود کرده است. لطفاً `{e.value}` ثانیه صبر کنید.")
                 except PhoneNumberInvalid:
                     await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, "❌ شماره وارد شده نامعتبر یا در تلگرام وجود ندارد.")
+                    return await self.send_message(chat_id, "❌ شماره وارد شده نامعتبر یا در تلگرام ثبت نشده است.")
                 except Exception as e:
                     await self.cleanup_user(user_id)
                     return await self.send_message(chat_id, f"❌ خطا در ارسال کد:\n`{str(e)}`")
@@ -200,20 +204,19 @@ class HttpBot:
                     session_str = await temp_client.export_session_string()
                     await temp_client.disconnect()
 
-                    # ذخیره در دیتابیس
                     async with aiosqlite.connect(DB_NAME) as db:
                         await db.execute("INSERT OR REPLACE INTO users (user_id, session_string) VALUES (?, ?)", (user_id, session_str))
                         await db.commit()
 
                     await self.cleanup_user(user_id)
                     success_text = (
-                        "🎉 **سلف اختصاصی شما با موفقیت ساخته و روشن شد!**\n\n"
-                        "🔐 **استرینگ سشن اختصاصی شما (جهت ذخیره امن):**\n"
+                        "🎉 **سلف اختصاصی شما با موفقیت ساخته و متصل شد!**\n\n"
+                        "🔐 **استرینگ سشن اکانت شما (جهت ذخیره):**\n"
                         f"`{session_str}`\n\n"
-                        "💡 **شروع به کار سلف‌بات:**\n"
-                        "وارد Saved Messages اکانت خود شوید و ارسال کنید:\n"
-                        "• `.راهنما` — مشاهده تمامی فرامین\n"
-                        "• `.نرخ ارز` — قیمت لحظه‌ای دلار و رمزارز\n"
+                        "💡 **شروع به کار:**\n"
+                        "وارد Saved Messages اکانت خود شوید و دستورات زیر را تست کنید:\n"
+                        "• `.راهنما` — لیست فرامین و امکانات\n"
+                        "• `.نرخ ارز` — قیمت لحظه‌ای دلار و طلا\n"
                         "• `.زمان اسم روشن` — ساعت متحرک روی نام شما"
                     )
                     return await self.send_message(chat_id, success_text)
@@ -224,12 +227,12 @@ class HttpBot:
                     return await self.send_message(
                         chat_id,
                         "🔐 **تایید دو مرحله‌ای (2FA) فعال است!**\n\n"
-                        "اکانت شما دارای گذرواژه ابری است. لطفاً رمز عبور اکانت تلگرام خود را ارسال کنید:\n"
-                        "*(پیام حاوی رمز عبور بلافاصله پس از پردازش پاک خواهد شد)*",
+                        "اکانت شما دارای گذرواژه ابری است. لطفاً رمز عبور اکانت تلگرام خود را بفرستید:\n"
+                        "*(پیام حاوی رمز عبور بلافاصله پس از پردازش جهت امنیت پاک خواهد شد)*",
                         reply_markup=kb
                     )
                 except (PhoneCodeInvalid, PhoneCodeExpired):
-                    return await self.send_message(chat_id, "❌ کد وارد شده اشتباه یا منقضی شده است. مجدداً تلاش کنید.")
+                    return await self.send_message(chat_id, "❌ کد وارد شده اشتباه یا منقضی شده است. مجدداً ارسال کنید:")
                 except Exception as e:
                     await self.cleanup_user(user_id)
                     return await self.send_message(chat_id, f"❌ خطا در احراز هویت:\n`{str(e)}`")
@@ -237,7 +240,6 @@ class HttpBot:
             # ۳. دریافت رمز تایید دو مرحله‌ای
             elif USER_STATES.get(user_id) == "WAITING_PASSWORD":
                 password = text
-                # پاک کردن پیام حاوی پسورد کاربر برای حفظ حریم خصوصی
                 await self.delete_message(chat_id, msg_id)
 
                 auth = USER_AUTH_DATA.get(user_id)
@@ -257,10 +259,10 @@ class HttpBot:
 
                     await self.cleanup_user(user_id)
                     success_text = (
-                        "🎉 **هویت شما تایید و سلف‌بات فعال شد!**\n\n"
-                        "🔐 **کد سشن اختصاصی اکانت شما:**\n"
+                        "🎉 **هویت شما با موفقیت تایید و سلف فعال شد!**\n\n"
+                        "🔐 **کد سشن اختصاصی شما:**\n"
                         f"`{session_str}`\n\n"
-                        "📌 از این لحظه سلف روی اکانت شما آنلاین است. دستور `.راهنما` را در Saved Messages تست کنید."
+                        "📌 از این لحظه سلف روی اکانت شما روشن است. دستور `.راهنما` را در Saved Messages تست کنید."
                     )
                     return await self.send_message(chat_id, success_text)
 
@@ -295,7 +297,7 @@ class HttpBot:
                 kb = {"inline_keyboard": [[{"text": "🔙 انصراف و بازگشت", "callback_data": "cancel_auth"}]]}
                 prompt = (
                     "📱 **ورود مستقیم با شماره تلفن:**\n\n"
-                    "لطفاً شماره موبایل اکانت تلگرام خود را با پیش‌شماره کشور ارسال فرمایید:\n\n"
+                    "لطفاً شماره موبایل اکانت تلگرام خود را به همراه کد کشور بفرستید:\n\n"
                     "📌 مثال برای شماره ایران:\n"
                     "`+989123456789`"
                 )
@@ -305,7 +307,7 @@ class HttpBot:
                 USER_STATES[user_id] = "WAITING_MANUAL_SESSION"
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "📖 راهنمای دریافت سشن", "callback_data": "help_session"}],
+                        [{"text": "📖 راهنمای سشن", "callback_data": "help_session"}],
                         [{"text": "🔙 انصراف و بازگشت", "callback_data": "cancel_auth"}]
                     ]
                 }
@@ -318,7 +320,7 @@ class HttpBot:
             elif data == "help_session":
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "⚡️ ورود با شماره تلفن", "callback_data": "auth_direct"}],
+                        [{"text": "⚡️ شروع ساخت سلف با شماره", "callback_data": "auth_direct"}],
                         [{"text": "🔙 بازگشت به منوی اصلی", "callback_data": "cancel_auth"}]
                     ]
                 }
@@ -328,10 +330,10 @@ class HttpBot:
                 await self.cleanup_user(user_id)
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "⚡️ ورود خودکار با شماره تلفن (پیشنهادی)", "callback_data": "auth_direct"}],
+                        [{"text": "⚡️ ورود خودکار با شماره تلفن (سریع)", "callback_data": "auth_direct"}],
                         [{"text": "🔑 ورود دستی با استرینگ سشن", "callback_data": "auth_manual"}],
                         [{"text": "📖 راهنما و امنیت سلف", "callback_data": "help_session"}],
-                        [{"text": "📢 کانال پشتیبانی", "url": "https://t.me/YourChannelID"}]
+                        [{"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
                     ]
                 }
                 await self.edit_message(chat_id, msg_id, "👑 **منوی اصلی سلف‌ساز:**\nیکی از گزینه‌های زیر را انتخاب نمایید:", reply_markup=kb)
