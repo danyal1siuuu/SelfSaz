@@ -32,12 +32,13 @@ async def launch_selfs():
 
 async def main():
     os.makedirs("downloads", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
     os.makedirs("database", exist_ok=True)
     print("🔄 Initializing DB...")
     await init_db()
     
     print("🤖 Starting Maker Bot...")
-    await bot.start()
+    asyncio.create_task(bot.start())
     
     print("⚡ Launching user selfbots...")
     await launch_selfs()
