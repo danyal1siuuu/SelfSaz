@@ -221,7 +221,7 @@ def add_system_log(text: str):
             [{"text": "۶۴. استخراج لیست آیدی تمام کاربران 📝", "callback_data": "ad_export_user_ids"}, {"text": "۶۵. راهنمای کامل کدهای خطا ℹ️", "callback_data": "ad_error_guide"}],
             [{"text": "🔙 بازگشت به هاب ادمین", "callback_data": "admin_hub"}]
         ]}
-        async def start(self):
+async def start(self):
         self.running = True
         offset = 0
         add_system_log("HTTP Bot service started successfully.")
