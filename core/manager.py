@@ -2,7 +2,7 @@
 import asyncio
 import os
 import json
-import re
+import glob
 from datetime import datetime
 import pytz
 from pyrogram import Client
@@ -11,22 +11,35 @@ import aiosqlite
 
 ACTIVE_CLIENTS = {}
 
-# ۱۰ مدل فونت جذاب و متنوع
 FONTS = {
-    1: {"0": "𝟎", "1": "𝟏", "2": "𝟐", "3": "𝟑", "4": "𝟒", "5": "𝟓", "6": "𝟔", "7": "𝟕", "8": "𝟖", "9": "𝟗"}, # ضخیم سِریف
-    2: {"0": "𝟘", "1": "𝟙", "2": "𝟚", "3": "𝟛", "4": "𝟜", "5": "𝟝", "6": "𝟞", "7": "𝟟", "8": "𝟠", "9": "𝟡"}, # دابل توخالی
-    3: {"0": "⓪", "1": "①", "2": "②", "3": "③", "4": "④", "5": "⑤", "6": "⑥", "7": "⑦", "8": "⑧", "9": "⑨"}, # دایره‌ای
-    4: {"0": "𝟶", "1": "𝟷", "2": "𝟸", "3": "𝟹", "4": "𝟺", "5": "𝟻", "6": "𝟼", "7": "𝟽", "8": "𝟾", "9": "𝟿"}, # مونو / ترمینال
-    5: {"0": "𝟬", "1": "𝟭", "2": "𝟮", "3": "𝟯", "4": "𝟰", "5": "𝟱", "6": "𝟲", "7": "𝟳", "8": "𝟴", "9": "𝟵"}, # ضخیم مدرن
-    6: {"0": "⓿", "1": "❶", "2": "❷", "3": "❸", "4": "❹", "5": "❺", "6": "❻", "7": "❼", "8": "❽", "9": "❾"}, # دایره مشکی
-    7: {"0": "𝟢", "1": "𝟣", "2": "𝟤", "3": "𝟥", "4": "𝟦", "5": "𝟧", "6": "𝟨", "7": "𝟩", "8": "𝟪", "9": "𝟫"}, # فانتزی
-    8: {"0": "۰", "1": "۱", "2": "۲", "3": "۳", "4": "۴", "5": "۵", "6": "۶", "7": "۷", "8": "۸", "9": "۹"}, # فارسی اصیل
-    9: {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"}, # بالانویس
-    10: {"0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉"} # زیرنویس
+    1: {"0": "𝟎", "1": "𝟏", "2": "𝟐", "3": "𝟑", "4": "𝟒", "5": "𝟓", "6": "𝟔", "7": "𝟕", "8": "𝟖", "9": "𝟗"},
+    2: {"0": "𝟘", "1": "𝟙", "2": "𝟚", "3": "𝟛", "4": "𝟜", "5": "𝟝", "6": "𝟞", "7": "𝟟", "8": "𝟠", "9": "𝟡"},
+    3: {"0": "⓪", "1": "①", "2": "②", "3": "③", "4": "④", "5": "⑤", "6": "⑥", "7": "⑦", "8": "⑧", "9": "⑨"},
+    4: {"0": "𝟶", "1": "𝟷", "2": "𝟸", "3": "𝟹", "4": "𝟺", "5": "𝟻", "6": "𝟼", "7": "𝟽", "8": "𝟾", "9": "𝟿"},
+    5: {"0": "𝟬", "1": "𝟭", "2": "𝟮", "3": "𝟯", "4": "𝟰", "5": "𝟱", "6": "𝟲", "7": "𝟳", "8": "𝟴", "9": "𝟵"},
+    6: {"0": "⓿", "1": "❶", "2": "❷", "3": "❸", "4": "❹", "5": "❺", "6": "❻", "7": "❼", "8": "❽", "9": "❾"},
+    7: {"0": "𝟢", "1": "𝟣", "2": "𝟤", "3": "𝟥", "4": "𝟦", "5": "𝟧", "6": "𝟨", "7": "𝟩", "8": "𝟪", "9": "𝟫"},
+    8: {"0": "۰", "1": "۱", "2": "۲", "3": "۳", "4": "۴", "5": "۵", "6": "۶", "7": "۷", "8": "۸", "9": "۹"},
+    9: {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"},
+    10: {"0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉"}
 }
 
+def clean_profile_name(first_name: str) -> str:
+    """پاکسازی ساعت قبلی از انتهای نام بدون رجکس خطرناک و بدون باگ یونیکد"""
+    if not first_name:
+        return "Self"
+    all_time_chars = set("0123456789: ")
+    for f in FONTS.values():
+        for ch in f.values():
+            all_time_chars.add(ch)
+
+    parts = first_name.rsplit(" ", 1)
+    if len(parts) == 2 and ":" in parts[1]:
+        if all(c in all_time_chars for c in parts[1].strip()):
+            return parts[0].strip() or "Self"
+    return first_name.strip() or "Self"
+
 async def timename_loop(client: Client, base_name: str, font_id: int):
-    """حلقه تغییر خودکار ساعت روی نام اکانت"""
     tz = pytz.timezone("Asia/Tehran")
     last_t = ""
     while getattr(client, "timename_active", False):
@@ -42,14 +55,13 @@ async def timename_loop(client: Client, base_name: str, font_id: int):
         await asyncio.sleep(20)
 
 async def restore_original_name(client: Client):
-    """بازگرداندن نام اصلی کاربر به محض خاموش شدن ساعت"""
     orig = getattr(client, "original_name", None) or client.settings.get("original_name")
     if orig:
         try:
             await client.update_profile(first_name=orig)
             print(f"[⏰ Name Restored] نام اکانت به '{orig}' برگردانده شد.")
-        except Exception as e:
-            print(f"[!] خطا در بازگرداندن نام: {e}")
+        except Exception:
+            pass
 
 async def start_single_client(user_id: int, session_str: str):
     if user_id in ACTIVE_CLIENTS:
@@ -87,16 +99,15 @@ async def start_single_client(user_id: int, session_str: str):
             api_hash=API_HASH,
             device_model="SelfSaz Pro",
             system_version="Linux x64",
-            app_version="5.5.0",
+            app_version="5.6.0",
             session_string=session_str,
             in_memory=True,
             plugins=dict(root="plugins")
         )
         await cli.start()
 
-        # ذخیره نام واقعی اکانت در اولین اجرا
         me = await cli.get_me()
-        clean_name = re.sub(r'\s+[\d\:\s٠-۹۰-۹⓪-⑨𝟎-𝟿⁰-⁹₀-₉❶-❾]+$', '', me.first_name).strip() or "Self"
+        clean_name = clean_profile_name(me.first_name)
         cli.original_name = settings.get("original_name") or clean_name
         settings["original_name"] = cli.original_name
 
@@ -118,7 +129,7 @@ async def start_single_client(user_id: int, session_str: str):
         return True, ""
     except Exception as e:
         err_msg = str(e)
-        print(f"[!] خطا در استارت {user_id}: {err_msg}")
+        print(f"[!] خطا در اجرای سلف {user_id}: {err_msg}")
         return False, err_msg
 
 async def stop_single_client(user_id: int):
@@ -137,6 +148,39 @@ async def stop_single_client(user_id: int):
             ACTIVE_CLIENTS.pop(user_id, None)
         return True
     return False
+
+async def stop_all_clients():
+    """خاموش‌سازی همگانی توسط ادمین"""
+    count = len(ACTIVE_CLIENTS)
+    for uid in list(ACTIVE_CLIENTS.keys()):
+        await stop_single_client(uid)
+    return count
+
+async def restart_all_clients():
+    """ریستارت همگانی سلف‌ها توسط ادمین"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id, session_string FROM users WHERE session_string IS NOT NULL")
+        rows = await cursor.fetchall()
+    count = 0
+    for uid, sess in rows:
+        await stop_single_client(uid)
+        await asyncio.sleep(0.5)
+        ok, _ = await start_single_client(uid, sess)
+        if ok:
+            count += 1
+    return count
+
+def clean_server_temp_files():
+    """پاکسازی فایل‌های بی‌استفاده و کش‌ها"""
+    deleted = 0
+    for pattern in ["*.session", "*.session-journal", "downloads/*"]:
+        for f in glob.glob(pattern):
+            try:
+                os.remove(f)
+                deleted += 1
+            except Exception:
+                pass
+    return deleted
 
 async def launch_all_existing_selfs():
     async with aiosqlite.connect(DB_NAME) as db:
