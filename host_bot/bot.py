@@ -4,12 +4,17 @@ import aiohttp
 import aiosqlite
 import json
 from config import BOT_TOKEN, DB_NAME, ADMIN_ID
-from core.manager import start_single_client, stop_single_client, ACTIVE_CLIENTS, timename_loop, restore_original_name
+from core.manager import (
+    start_single_client, stop_single_client, ACTIVE_CLIENTS, 
+    timename_loop, restore_original_name, stop_all_clients, 
+    restart_all_clients, clean_server_temp_files
+)
 from plugins.fun_crypto import fetch_live_market_data, format_market_display
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 CHANNEL_URL = "https://t.me/Vip_Viro"
 USER_STATES = {}
+TARGET_USER_ADMIN = {}
 
 class HttpBot:
     def __init__(self):
@@ -98,17 +103,17 @@ class HttpBot:
                     await asyncio.sleep(2)
 
     async def handle_update(self, update):
-        # ----------------- پیام‌های ورودی -----------------
+        # ----------------- پیام‌های ورودی متنی -----------------
         if "message" in update:
             msg = update["message"]
             chat_id = msg["chat"]["id"]
             user_id = msg.get("from", {}).get("id", chat_id)
             text = msg.get("text", "").strip()
+            is_admin = (user_id == ADMIN_ID)
 
             if text in ["/start", "/panel"]:
                 USER_STATES.pop(user_id, None)
                 u = await self.get_user_db(user_id)
-                is_admin = (user_id == ADMIN_ID)
                 if u:
                     is_online = user_id in ACTIVE_CLIENTS
                     p_text = (
@@ -130,10 +135,11 @@ class HttpBot:
                     }
                     return await self.send_message(chat_id, "👋 **به سیستم مدیریت سلف‌ساز خوش آمدید!**\n\nجهت راه‌اندازی و اتصال سلف روی دکمه زیر کلیک کنید:", reply_markup=kb)
 
-            elif text == "/admin" and user_id == ADMIN_ID:
-                return await self.open_admin_panel(chat_id)
+            # دستور اختصاصی ادمین
+            if text == "/admin" and is_admin:
+                return await self.show_admin_panel(chat_id)
 
-            # دریافت سشن اکانت
+            # دریافت سشن اولیه
             if USER_STATES.get(user_id) == "WAITING_SESSION":
                 if len(text) > 40:
                     await self.send_message(chat_id, "⏳ در حال اتصال آنی سلف به سرور...")
@@ -145,30 +151,44 @@ class HttpBot:
                     USER_STATES.pop(user_id, None)
 
                     if started:
-                        await self.send_message(chat_id, "🎉 **سلف شما با موفقیت روشن شد!** اکنون همه کارها را با دکمه‌ها کنترل کنید:", reply_markup=self.get_main_dashboard_kb(True, user_id == ADMIN_ID))
+                        await self.send_message(chat_id, "🎉 **سلف شما روشن شد!** اکنون همه قابلیت‌ها را با دکمه‌ها کنترل کنید:", reply_markup=self.get_main_dashboard_kb(True, is_admin))
                     else:
                         await self.send_message(chat_id, f"❌ خطا در روشن شدن:\n`{err}`")
                 else:
                     await self.send_message(chat_id, "❌ استرینگ سشن ارسالی نامعتبر است.")
 
-            # ارسال همگانی ادمین
-            elif USER_STATES.get(user_id) == "WAITING_BROADCAST" and user_id == ADMIN_ID:
+            # دریافت متن پیام همگانی ادمین
+            elif USER_STATES.get(user_id) == "WAITING_BROADCAST" and is_admin:
                 USER_STATES.pop(user_id, None)
-                await self.send_message(chat_id, "⏳ در حال ارسال پیام به تمام کاربران...")
+                await self.send_message(chat_id, "⏳ در حال ارسال پیام همگانی...")
                 count = 0
                 async with aiosqlite.connect(DB_NAME) as db:
                     cursor = await db.execute("SELECT user_id FROM users")
                     rows = await cursor.fetchall()
                 for r in rows:
                     try:
-                        await self.send_message(r[0], f"📢 **پیام مدیریت:**\n\n{text}")
+                        await self.send_message(r[0], f"📢 **اطلاعیه مدیریت:**\n\n{text}")
                         count += 1
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.08)
                     except Exception:
                         pass
-                return await self.send_message(chat_id, f"✅ پیام با موفقیت به {count} کاربر ارسال گردید.")
+                return await self.send_message(chat_id, f"✅ پیام به {count} کاربر با موفقیت ارسال شد.")
 
-        # ----------------- دکمه‌ها و کلیک‌ها -----------------
+            # دریافت آیدی کاربر برای مدیریت توسط ادمین
+            elif USER_STATES.get(user_id) == "WAITING_TARGET_USER" and is_admin:
+                USER_STATES.pop(user_id, None)
+                if text.isdigit():
+                    t_uid = int(text)
+                    target_data = await self.get_user_db(t_uid)
+                    if target_data:
+                        TARGET_USER_ADMIN[user_id] = t_uid
+                        return await self.show_target_user_card(chat_id, t_uid, target_data)
+                    else:
+                        return await self.send_message(chat_id, f"❌ کاربری با شناسه عددی `{t_uid}` در دیتابیس یافت نشد.")
+                else:
+                    return await self.send_message(chat_id, "❌ شناسه عددی نامعتبر است.")
+
+        # ----------------- دکمه‌ها و رویدادهای شیشه‌ای -----------------
         elif "callback_query" in update:
             cq = update["callback_query"]
             chat_id = cq["message"]["chat"]["id"]
@@ -177,16 +197,36 @@ class HttpBot:
             data = cq.get("data")
             is_admin = (user_id == ADMIN_ID)
 
+            # دکمه‌های عمومی که بدون ثبت‌نام هم مجاز هستند
+            allowed_unregistered = ["btn_submit_session", "back_home"]
+
+            # بررسی ادمین بودن
+            is_admin_action = is_admin and (data.startswith("admin_") or data in ["menu_admin"])
+
+            # 🛡 لایه محافظتی: قطع دسترسی تمام دکمه‌ها در چت‌های قبلی پس از حذف سلف
+            if not is_admin_action and data not in allowed_unregistered:
+                u_check = await self.get_user_db(user_id)
+                if not u_check:
+                    await self.answer_callback(cq["id"], "❌ سلف شما حذف شده است و دیگر این دکمه‌ها فعال نیستند!", alert=True)
+                    kb_reconnect = {
+                        "inline_keyboard": [
+                            [{"text": "🔑 اتصال مجدد سلف (ارسال سشن)", "callback_data": "btn_submit_session"}],
+                            [{"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
+                        ]
+                    }
+                    return await self.edit_message(chat_id, msg_id, "🛑 **سلف شما قبلاً حذف شده است.**\nدکمه‌های این پیام منقضی شده‌اند. برای راه‌اندازی روی دکمه زیر بزنید:", reply_markup=kb_reconnect)
+
+            # ارسال سشن
             if data == "btn_submit_session":
                 USER_STATES[user_id] = "WAITING_SESSION"
                 kb = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "back_home"}]]}
                 await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "📱 استرینگ سشن (String Session) اکانت خود را بفرستید:", reply_markup=kb)
+                return await self.edit_message(chat_id, msg_id, "📱 کد استرینگ سشن (String Session) اکانت خود را در چت بفرستید:", reply_markup=kb)
 
-            # کنترل وضعیت سلف
+            # ۱. دکمه‌های وضعیت سلف
             elif data == "btn_turn_off":
                 await stop_single_client(user_id)
-                await self.answer_callback(cq["id"], "🛑 سلف خاموش شد و نام اصلی بازگردانده شد.")
+                await self.answer_callback(cq["id"], "🛑 سلف خاموش شد و نام اصلی بازگشت.")
                 return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (خاموش 🔴)**", reply_markup=self.get_main_dashboard_kb(False, is_admin))
 
             elif data == "btn_turn_on":
@@ -212,12 +252,13 @@ class HttpBot:
                 await stop_single_client(user_id)
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+                    await db.execute("DELETE FROM relations WHERE owner_id = ?", (user_id,))
                     await db.commit()
-                await self.answer_callback(cq["id"], "اکانت و سلف شما پاک شد.", alert=True)
-                kb = {"inline_keyboard": [[{"text": "🔑 اتصال مجدد", "callback_data": "btn_submit_session"}]]}
-                return await self.edit_message(chat_id, msg_id, "🛑 سلف شما متوقف و حذف شد.", reply_markup=kb)
+                await self.answer_callback(cq["id"], "اکانت و سلف شما با موفقیت حذف شد.", alert=True)
+                kb = {"inline_keyboard": [[{"text": "🔑 اتصال مجدد سلف", "callback_data": "btn_submit_session"}]]}
+                return await self.edit_message(chat_id, msg_id, "🛑 **سلف شما به طور کامل متوقف و حذف شد.**\nتمامی دکمه‌های پیام‌های قبلی شما باطل شدند.", reply_markup=kb)
 
-            # نرخ لحظه‌ای ارز، طلا و رمزارز
+            # ۲. نرخ لحظه‌ای ارز، طلا، سکه و کریپتو
             elif data in ["menu_rates", "refresh_rates"]:
                 await self.answer_callback(cq["id"], "🔄 درحال استعلام مظنه زنده بازار...")
                 rates_data = await fetch_live_market_data()
@@ -230,7 +271,7 @@ class HttpBot:
                 }
                 return await self.edit_message(chat_id, msg_id, market_text, reply_markup=kb)
 
-            # منوی ساعت روی اسم با ۱۰ فونت
+            # ۳. ساعت روی اسم با ۱۰ فونت
             elif data == "menu_timename":
                 cli = ACTIVE_CLIENTS.get(user_id)
                 t_on = getattr(cli, "timename_active", False) if cli else False
@@ -251,7 +292,7 @@ class HttpBot:
                     "⏰ **بخش ساعت خودکار روی نام اکانت (۱۰ فونت)**\n"
                     "━━━━━━━━━━━━━━━━━━━━━\n"
                     f"وضعیت فعلی: `{'روشن 🟢' if t_on else 'خاموش 🔴'}`\n\n"
-                    "⚡️ **ویژگی هوشمند:** به محض خاموش کردن ساعت، نام اکانت شما دقیقاً به همان اسم قبلی‌تان برمی‌گردد!"
+                    "⚡️ با خاموش کردن ساعت، نام شما بلافاصله به اسم اصلی‌تان بازمی‌گردد."
                 )
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
@@ -265,20 +306,20 @@ class HttpBot:
                         cli.timename_task.cancel()
                     await restore_original_name(cli)
                     await self.update_setting_db(user_id, "timename_active", False)
-                    await self.answer_callback(cq["id"], "🛑 ساعت خاموش شد و نام قبلی شما بازگشت.")
+                    await self.answer_callback(cq["id"], "🛑 ساعت خاموش شد و نام قبلی بازگشت.")
                 else:
                     cli.timename_active = True
                     await self.update_setting_db(user_id, "timename_active", True)
                     cli.timename_task = asyncio.create_task(timename_loop(cli, cli.original_name, cli.settings.get("timename_font", 1)))
-                    await self.answer_callback(cq["id"], "🟢 ساعت روی اسم با موفقیت روشن شد!")
+                    await self.answer_callback(cq["id"], "🟢 ساعت روی اسم روشن شد!")
                 return await self.handle_update({"callback_query": {**cq, "data": "menu_timename"}})
 
             elif data.startswith("font_"):
                 f_id = int(data.split("_")[1])
                 await self.update_setting_db(user_id, "timename_font", f_id)
-                await self.answer_callback(cq["id"], f"✅ فونت {f_id} انتخاب شد.", alert=True)
+                await self.answer_callback(cq["id"], f"✅ فونت {f_id} فعال شد.", alert=True)
 
-            # منوی منشی هوشمند
+            # ۴. منشی هوشمند
             elif data == "menu_monshi":
                 cli = ACTIVE_CLIENTS.get(user_id)
                 m_on = getattr(cli, "monshi_active", False) if cli else False
@@ -291,12 +332,7 @@ class HttpBot:
                     ]
                 }
                 await self.answer_callback(cq["id"])
-                txt = (
-                    "🤖 **منشی پاسخگوی خودکار پی‌وی**\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"وضعیت: `{'فعال و آماده پاسخ 🟢' if m_on else 'غیرفعال 🔴'}`\n\n"
-                    "با روشن بودن این بخش، به محض ارسال پیام از طرف هر فرد در چت خصوصی، منشی پاسخی محترمانه ارسال می‌کند."
-                )
+                txt = f"🤖 **منشی پاسخگوی خودکار پی‌وی**\n\nوضعیت: `{'فعال و آماده 🟢' if m_on else 'غیرفعال 🔴'}`"
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
             elif data == "toggle_monshi":
@@ -312,9 +348,9 @@ class HttpBot:
                 cli = ACTIVE_CLIENTS.get(user_id)
                 if cli and hasattr(cli, "monshi_replied_users"):
                     cli.monshi_replied_users.clear()
-                await self.answer_callback(cq["id"], "🔄 حافظه منشی پاک شد؛ اکنون می‌توانید بلافاصله تست کنید.", alert=True)
+                await self.answer_callback(cq["id"], "🔄 حافظه منشی خالی شد. پیام تست بفرستید!", alert=True)
 
-            # پاکسازی خودکار
+# ۵. پاکسازی پیام‌ها
             elif data == "menu_cleaner":
                 cli = ACTIVE_CLIENTS.get(user_id)
                 c_on = getattr(cli, "cleaner_active", False) if cli else False
@@ -328,7 +364,7 @@ class HttpBot:
                     ]
                 }
                 await self.answer_callback(cq["id"])
-                txt = f"🗑 **سیستم پاکسازی پیام‌های ارسالی**\nوضعیت: `{'روشن 🟢' if c_on else 'خاموش 🔴'}` | تاخیر: `{delay}` ثانیه"
+                txt = f"🗑 **پاکسازی خودکار پیام‌ها**\nوضعیت: `{'روشن 🟢' if c_on else 'خاموش 🔴'}` | تایمر: `{delay}` ثانیه"
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
             elif data == "toggle_cleaner":
@@ -346,7 +382,7 @@ class HttpBot:
                 await self.answer_callback(cq["id"], f"⏱ تایمر روی {sec} ثانیه ذخیره شد!", alert=True)
                 return await self.handle_update({"callback_query": {**cq, "data": "menu_cleaner"}})
 
-# امنیت و روابط
+            # ۶. امنیت و دوستان و دشمنان
             elif data == "menu_relations":
                 async with aiosqlite.connect(DB_NAME) as db:
                     c1 = await db.execute("SELECT COUNT(*) FROM relations WHERE owner_id = ? AND type = 'enemy'", (user_id,))
@@ -355,12 +391,12 @@ class HttpBot:
                     fc = (await c2.fetchone())[0]
                 kb = {
                     "inline_keyboard": [
-                        [{"text": f"🗑 پاکسازی کامل دشمنان ({ec})", "callback_data": "clear_enemies"}, {"text": f"🗑 پاکسازی کامل دوستان ({fc})", "callback_data": "clear_friends"}],
+                        [{"text": f"🗑 پاکسازی دشمنان ({ec})", "callback_data": "clear_enemies"}, {"text": f"🗑 پاکسازی دوستان ({fc})", "callback_data": "clear_friends"}],
                         [{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]
                     ]
                 }
                 await self.answer_callback(cq["id"])
-                txt = f"🛡 **داشبورد امنیت و روابط**\n⚔️ دشمنان: `{ec}` نفر | ❤️ دوستان: `{fc}` نفر"
+                txt = f"🛡 **داشبورد امنیت و روابط**\n⚔️ دشمنان فعال: `{ec}` نفر | ❤️ دوستان ویژه: `{fc}` نفر"
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
             elif data == "clear_enemies":
@@ -377,7 +413,7 @@ class HttpBot:
                 await self.answer_callback(cq["id"], "🗑 لیست دوستان خالی شد.", alert=True)
                 return await self.handle_update({"callback_query": {**cq, "data": "menu_relations"}})
 
-            # پیشوند دستورات
+            # ۷. پیشوند دستورات
             elif data == "menu_prefix":
                 u = await self.get_user_db(user_id)
                 curr_p = u[3] if u else "."
@@ -404,62 +440,100 @@ class HttpBot:
                 await self.answer_callback(cq["id"], "✅ پیشوند سلف تغییر یافت.", alert=True)
                 return await self.handle_update({"callback_query": {**cq, "data": "menu_prefix"}})
 
-            # ابزارها
+            # ۸. جعبه ابزارها
             elif data == "menu_tools":
-                kb = {"inline_keyboard": [[{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]]}
+                kb = {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]]}
                 await self.answer_callback(cq["id"])
                 txt = "🛠 **ابزارهای سلف‌بات:**\n• ارسال لینک ویدیو یوتیوب جهت دانلود\n• ریپلای روی ویدیو جهت ساخت ویدیو گرد\n• ریپلای روی پیام‌های کانال‌های قفل جهت دانلود و سیو"
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
-            # پنل اختصاصی ادمین
+            # ================== پنل فوق‌حرفه‌ای ادمین ==================
             elif data == "menu_admin" and is_admin:
                 await self.answer_callback(cq["id"])
-                async with aiosqlite.connect(DB_NAME) as db:
-                    c1 = await db.execute("SELECT COUNT(*) FROM users")
-                    total_users = (await c1.fetchone())[0]
-                    c2 = await db.execute("SELECT COUNT(*) FROM users WHERE is_vip = 1")
-                    vip_users = (await c2.fetchone())[0]
-
-                online_selfs = len(ACTIVE_CLIENTS)
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "📢 ارسال پیام همگانی", "callback_data": "admin_broadcast"}],
-                        [{"text": "💎 ارتقای خود به VIP نامحدود", "callback_data": "admin_make_vip"}, {"text": "💰 شارژ ۵۰۰ سکه به اکانت خود", "callback_data": "admin_add_coins"}],
-                        [{"text": "🔙 بازگشت به منو", "callback_data": "back_dashboard"}]
-                    ]
-                }
-                admin_txt = (
-                    "👑 **پنل مدیریت کل سرور سلف‌ساز (ویژه مدیر)**\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"👥 کل کاربران دیتابیس: `{total_users}` نفر\n"
-                    f"⚡️ سلف‌های آنلاین در لحظه: `{online_selfs}` اکانت\n"
-                    f"💎 اعضای پلن ویژه (VIP): `{vip_users}` نفر\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "👇 عملیات مدیریتی مورد نظر را انتخاب کنید:"
-                )
-                return await self.edit_message(chat_id, msg_id, admin_txt, reply_markup=kb)
+                return await self.show_admin_panel(chat_id, msg_id)
 
             elif data == "admin_broadcast" and is_admin:
                 USER_STATES[user_id] = "WAITING_BROADCAST"
                 await self.answer_callback(cq["id"])
-                kb = {"inline_keyboard": [[{"text": "🔙 لغو", "callback_data": "menu_admin"}]]}
-                return await self.edit_message(chat_id, msg_id, "📝 لطفاً متن پیام همگانی را ارسال کنید تا برای همه کاربران فرستاده شود:", reply_markup=kb)
+                kb = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "menu_admin"}]]}
+                return await self.edit_message(chat_id, msg_id, "📝 **ارسال همگانی:** پیام خود را تایپ و ارسال کنید تا برای همه کاربران فرستاده شود:", reply_markup=kb)
 
-            elif data == "admin_make_vip" and is_admin:
+            elif data == "admin_find_user" and is_admin:
+                USER_STATES[user_id] = "WAITING_TARGET_USER"
+                await self.answer_callback(cq["id"])
+                kb = {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "menu_admin"}]]}
+                return await self.edit_message(chat_id, msg_id, "🔍 **شناسه عددی (User ID)** کاربر مورد نظر را در چت ارسال کنید:", reply_markup=kb)
+
+            elif data == "admin_gift_coins" and is_admin:
                 async with aiosqlite.connect(DB_NAME) as db:
-                    await db.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (user_id,))
+                    await db.execute("UPDATE users SET coins = coins + 50")
                     await db.commit()
-                await self.answer_callback(cq["id"], "💎 اکانت شما به پلن VIP دائمی ارتقا یافت!", alert=True)
-                return await self.handle_update({"callback_query": {**cq, "data": "menu_admin"}})
+                await self.answer_callback(cq["id"], "🎁 به تمام کاربران ۵۰ سکه هدیه داده شد!", alert=True)
+                return await self.show_admin_panel(chat_id, msg_id)
 
-            elif data == "admin_add_coins" and is_admin:
+            elif data == "admin_restart_all" and is_admin:
+                await self.answer_callback(cq["id"], "⏳ در حال ریستارت همگانی سلف‌ها...", alert=True)
+                restarted = await restart_all_clients()
+                await self.send_message(chat_id, f"🔄 **ریستارت همگانی:** تعداد `{restarted}` سلف آنلاین با موفقیت ریستارت شدند.")
+                return await self.show_admin_panel(chat_id, msg_id)
+
+            elif data == "admin_stop_all" and is_admin:
+                stopped = await stop_all_clients()
+                await self.answer_callback(cq["id"], f"🛑 تمامی {stopped} سلف فعال خاموش شدند.", alert=True)
+                return await self.show_admin_panel(chat_id, msg_id)
+
+            elif data == "admin_clean_cache" and is_admin:
+                d = clean_server_temp_files()
                 async with aiosqlite.connect(DB_NAME) as db:
-                    await db.execute("UPDATE users SET coins = coins + 500 WHERE user_id = ?", (user_id,))
+                    await db.execute("VACUUM")
                     await db.commit()
-                await self.answer_callback(cq["id"], "💰 ۵۰۰ سکه به اکانت شما اضافه شد!", alert=True)
-                return await self.handle_update({"callback_query": {**cq, "data": "menu_admin"}})
+                await self.answer_callback(cq["id"], f"🧹 سرور بهینه‌سازی شد و {d} فایل کش پاک شد.", alert=True)
+                return await self.show_admin_panel(chat_id, msg_id)
 
-            # بازگشت به داشبورد
+            # عملیات روی کاربر انتخابی توسط ادمین
+            elif data == "admin_toggle_vip" and is_admin:
+                t_uid = TARGET_USER_ADMIN.get(user_id)
+                if t_uid:
+                    u_data = await self.get_user_db(t_uid)
+                    new_vip = 0 if u_data[2] else 1
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute("UPDATE users SET is_vip = ? WHERE user_id = ?", (new_vip, t_uid))
+                        await db.commit()
+                    await self.answer_callback(cq["id"], f"وضعیت VIP کاربر به {new_vip} تغییر یافت.", alert=True)
+                    target_data = await self.get_user_db(t_uid)
+                    return await self.show_target_user_card(chat_id, t_uid, target_data, msg_id)
+
+            elif data == "admin_add_100_coins" and is_admin:
+                t_uid = TARGET_USER_ADMIN.get(user_id)
+                if t_uid:
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute("UPDATE users SET coins = coins + 100 WHERE user_id = ?", (t_uid,))
+                        await db.commit()
+                    await self.answer_callback(cq["id"], "💰 ۱۰۰ سکه به کاربر اضافه شد.", alert=True)
+                    target_data = await self.get_user_db(t_uid)
+                    return await self.show_target_user_card(chat_id, t_uid, target_data, msg_id)
+
+            elif data == "admin_force_stop" and is_admin:
+                t_uid = TARGET_USER_ADMIN.get(user_id)
+                if t_uid:
+                    await stop_single_client(t_uid)
+                    await self.answer_callback(cq["id"], "🛑 سلف کاربر به صورت اجباری متوقف شد.", alert=True)
+                    target_data = await self.get_user_db(t_uid)
+                    return await self.show_target_user_card(chat_id, t_uid, target_data, msg_id)
+
+            elif data == "admin_ban_user" and is_admin:
+                t_uid = TARGET_USER_ADMIN.get(user_id)
+                if t_uid:
+                    await stop_single_client(t_uid)
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute("DELETE FROM users WHERE user_id = ?", (t_uid,))
+                        await db.execute("DELETE FROM relations WHERE owner_id = ?", (t_uid,))
+                        await db.commit()
+                    TARGET_USER_ADMIN.pop(user_id, None)
+                    await self.answer_callback(cq["id"], "🗑 کاربر و سلف وی کلاً از سرور حذف و بن شدند.", alert=True)
+                    return await self.show_admin_panel(chat_id, msg_id)
+
+            # بازگشت‌ها
             elif data == "back_dashboard":
                 is_online = user_id in ACTIVE_CLIENTS
                 u = await self.get_user_db(user_id)
@@ -480,5 +554,58 @@ class HttpBot:
                 kb = {"inline_keyboard": [[{"text": "🔑 اتصال اکانت (ارسال سشن)", "callback_data": "btn_submit_session"}]]}
                 await self.answer_callback(cq["id"])
                 return await self.edit_message(chat_id, msg_id, "👋 لطفاً انتخاب کنید:", reply_markup=kb)
+
+    # ------------------ متدهای پنل مدیریت کل ادمین ------------------
+    async def show_admin_panel(self, chat_id, msg_id=None):
+        async with aiosqlite.connect(DB_NAME) as db:
+            c1 = await db.execute("SELECT COUNT(*) FROM users")
+            total_users = (await c1.fetchone())[0]
+            c2 = await db.execute("SELECT COUNT(*) FROM users WHERE is_vip = 1")
+            vip_users = (await c2.fetchone())[0]
+
+        online_selfs = len(ACTIVE_CLIENTS)
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔍 جستجو و مدیریت کاربر", "callback_data": "admin_find_user"}, {"text": "📢 ارسال پیام همگانی", "callback_data": "admin_broadcast"}],
+                [{"text": "🎁 هدیه ۵۰ سکه به همه", "callback_data": "admin_gift_coins"}, {"text": "🔄 ریستارت همگانی سلف‌ها", "callback_data": "admin_restart_all"}],
+                [{"text": "🛑 خاموش‌سازی همگانی", "callback_data": "admin_stop_all"}, {"text": "🧹 پاکسازی کش و دیتابیس", "callback_data": "admin_clean_cache"}],
+                [{"text": "🔙 بازگشت به منوی کاربری", "callback_data": "back_dashboard"}]
+            ]
+        }
+        admin_txt = (
+            "👑 **مرکز کنترل و مدیریت کل سرور (Super Admin)**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 کل کاربران ثبت‌شده: `{total_users}` نفر\n"
+            f"⚡️ سلف‌های روشن در لحظه: `{online_selfs}` اکانت\n"
+            f"💎 اعضای ویژه (VIP): `{vip_users}` نفر | عادی: `{total_users - vip_users}` نفر\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "👇 عملیات سیستمی مورد نظر را انتخاب کنید:"
+        )
+        if msg_id:
+            return await self.edit_message(chat_id, msg_id, admin_txt, reply_markup=kb)
+        return await self.send_message(chat_id, admin_txt, reply_markup=kb)
+
+    async def show_target_user_card(self, chat_id, t_uid, target_data, msg_id=None):
+        is_online = t_uid in ACTIVE_CLIENTS
+        kb = {
+            "inline_keyboard": [
+                [{"text": f"💎 تغییر وضعیت VIP (فعلی: {'بله' if target_data[2] else 'خیر'})", "callback_data": "admin_toggle_vip"}],
+                [{"text": "➕ افزایش ۱۰۰ سکه", "callback_data": "admin_add_100_coins"}, {"text": "🛑 خاموش کردن سلف", "callback_data": "admin_force_stop"}],
+                [{"text": "🗑 حذف و بن کاربر از سیستم", "callback_data": "admin_ban_user"}],
+                [{"text": "🔙 بازگشت به پنل ادمین", "callback_data": "menu_admin"}]
+            ]
+        }
+        card = (
+            f"👤 **مدیریت کاربر:** `{t_uid}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚡️ وضعیت اتصال سلف: `{'آنلاین و متصل 🟢' if is_online else 'خاموش 🔴'}`\n"
+            f"💰 موجودی سکه: `{target_data[1]}` | پلن: `{'VIP 💎' if target_data[2] else 'عادی'}`\n"
+            f"🔘 پیشوند تنظیم شده: `{target_data[3]}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "👇 دستور مورد نظر را اعمال کنید:"
+        )
+        if msg_id:
+            return await self.edit_message(chat_id, msg_id, card, reply_markup=kb)
+        return await self.send_message(chat_id, card, reply_markup=kb)
 
 bot = HttpBot()
