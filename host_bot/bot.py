@@ -2,53 +2,14 @@
 import asyncio
 import aiohttp
 import aiosqlite
-import re
-from pyrogram import Client
-from pyrogram.errors import (
-    SessionPasswordNeeded,
-    PhoneCodeInvalid,
-    PhoneCodeExpired,
-    PhoneNumberInvalid,
-    FloodWait,
-    PasswordHashInvalid
-)
-from config import BOT_TOKEN, DB_NAME, API_ID, API_HASH
+import json
+from config import BOT_TOKEN, DB_NAME
+from core.manager import start_single_client, stop_single_client, ACTIVE_CLIENTS
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-
-# 👈 لینک کانال خود را اینجا بگذارید (اگر کانال ندارید، بگذارید https://t.me)
-CHANNEL_URL = "https://t.me/Vip_Viro"
+CHANNEL_URL = "https://t.me/YourChannelUsername"
 
 USER_STATES = {}
-USER_AUTH_DATA = {}
-
-SESSION_HELP_TEXT = """
-🔐 **راهنمای جامع ساخت سلف و ورود امن**
-
-━━━━━━━━━━━━━━━━━━━━━
-❓ **استرینگ سشن چیست؟**
-یک کلید رمزنگاری‌شده استاندارد است که به ربات سلف‌ساز اجازه می‌دهد بدون نیاز به افشای رمز اصلی شما، قابلیت‌های پیشرفته (ساعت متحرک، ضدادیت، دانلودرها و...) را روی اکانتتان فعال کند.
-
-━━━━━━━━━━━━━━━━━━━━━
-🚀 **مراحل راه‌اندازی (۱۰۰٪ داخل همین ربات):**
-
-1️⃣ روی دکمه **«⚡️ ورود خودکار با شماره تلفن»** در منوی اصلی بزنید.
-
-2️⃣ شماره تلفن خود را با پیش‌شماره کشور بفرستید (مثلاً: `+989123456789`).
-
-3️⃣ کد ۵ رقمی که تلگرام برایتان ارسال می‌کند را وارد کنید.
-
-4️⃣ در صورتی که اکانت شما تایید دو مرحله‌ای (2FA) دارد، رمز عبورتان را وارد کنید.
-
-5️⃣ کار تمام است! سلف‌بات شما فوراً فعال شده و یک نسخه از کد سشن نیز جهت بکاپ به شما تحویل داده می‌شود.
-
-━━━━━━━━━━━━━━━━━━━━━
-🛡 **امنیت و حریم خصوصی:**
-• تمامی سشن‌ها به صورت رمزگذاری‌شده روی سرور امن نگهداری می‌شوند.
-• هر زمان تمایل داشته باشید، می‌توانید از بخش:
-`Settings > Devices (دستگاه‌های فعال)`
-در تلگرام خود با یک کلیک دسترسی سلف‌ساز را قطع کنید.
-"""
 
 class HttpBot:
     def __init__(self):
@@ -76,35 +37,42 @@ class HttpBot:
         except Exception:
             pass
 
-    async def delete_message(self, chat_id, message_id):
+    async def answer_callback(self, callback_query_id, text=None):
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+            payload["show_alert"] = True
         try:
             async with aiohttp.ClientSession() as session:
-                await session.post(f"{API_URL}/deleteMessage", json={"chat_id": chat_id, "message_id": message_id})
+                await session.post(f"{API_URL}/answerCallbackQuery", json=payload)
         except Exception:
             pass
 
-    async def answer_callback(self, callback_query_id):
-        try:
-            async with aiohttp.ClientSession() as session:
-                await session.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
-        except Exception:
-            pass
+    async def is_registered(self, user_id):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cursor = await db.execute("SELECT session_string, coins, is_vip, prefix FROM users WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row if row else None
 
-    async def cleanup_user(self, user_id):
-        if user_id in USER_AUTH_DATA:
-            try:
-                client = USER_AUTH_DATA[user_id].get("client")
-                if client and client.is_connected:
-                    await client.disconnect()
-            except Exception:
-                pass
-            del USER_AUTH_DATA[user_id]
-        USER_STATES.pop(user_id, None)
+    # ------------------ داشبورد اصلی سلف ------------------
+    def get_dashboard_kb(self, is_online):
+        status_btn = "🟢 وضعیت: روشن" if is_online else "🔴 وضعیت: خاموش"
+        toggle_cb = "turn_off" if is_online else "turn_on"
+        return {
+            "inline_keyboard": [
+                [{"text": status_btn, "callback_data": toggle_cb}, {"text": "🔄 ریستارت سلف", "callback_data": "restart_self"}],
+                [{"text": "⏰ زمان، نام و بیو", "callback_data": "p_time"}, {"text": "🛡 مدیریت و ضد خیانت", "callback_data": "p_security"}],
+                [{"text": "🤖 منشی و هوش مصنوعی", "callback_data": "p_ai"}, {"text": "🛠 ابزارها و دانلودرها", "callback_data": "p_tools"}],
+                [{"text": "📢 همگانی و تبلیغات", "callback_data": "p_broadcast"}, {"text": "🗑 پاکسازی خودکار", "callback_data": "p_cleaner"}],
+                [{"text": "⚡️ تنظیم پیشوند (.)", "callback_data": "p_prefix"}, {"text": "🎮 سرگرمی و کریپتو", "callback_data": "p_fun"}],
+                [{"text": "🛑 خروج و حذف سلف", "callback_data": "delete_self"}, {"text": "📢 کانال ما", "url": CHANNEL_URL}]
+            ]
+        }
 
     async def start(self):
         self.running = True
         offset = 0
-        print("[+] Maker Bot successfully online with In-House Session Generator!")
+        print("[+] HTTP Bot Control Panel Started.")
         async with aiohttp.ClientSession() as session:
             while self.running:
                 try:
@@ -119,232 +87,210 @@ class HttpBot:
                     await asyncio.sleep(2)
 
     async def handle_update(self, update):
-        # ----------------- پردازش پیام‌های متنی -----------------
         if "message" in update:
             msg = update["message"]
             chat_id = msg["chat"]["id"]
             user_id = msg.get("from", {}).get("id", chat_id)
             text = msg.get("text", "").strip()
-            msg_id = msg["message_id"]
 
             if text == "/start":
-                await self.cleanup_user(user_id)
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "⚡️ ورود خودکار با شماره تلفن (سریع)", "callback_data": "auth_direct"}],
-                        [{"text": "🔑 ورود دستی با استرینگ سشن", "callback_data": "auth_manual"}],
-                        [{"text": "📖 راهنما و امنیت سلف", "callback_data": "help_session"}],
-                        [{"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
-                    ]
-                }
-                welcome = (
-                    "👑 **به سامانه هوشمند و اختصاصی سلف‌ساز خوش آمدید!**\n\n"
-                    "با این سیستم می‌توانید بدون نیاز به هیچ برنامه یا ربات دیگر، اکانت خود را مستقیماً به امکانات پیشرفته مجهز کنید.\n\n"
-                    "👇 لطفاً یکی از گزینه‌های زیر را انتخاب نمایید:"
-                )
-                return await self.send_message(chat_id, welcome, reply_markup=kb)
-
-            # ۱. دریافت شماره تلفن
-            if USER_STATES.get(user_id) == "WAITING_PHONE":
-                clean_phone = re.sub(r"[^\d+]", "", text)
-                if not clean_phone.startswith("+") or len(clean_phone) < 10:
-                    kb = {"inline_keyboard": [[{"text": "🔙 انصراف و بازگشت", "callback_data": "cancel_auth"}]]}
-                    return await self.send_message(
-                        chat_id,
-                        "❌ **فرمت شماره اشتباه است!**\nشماره باید همراه با کد کشور باشد.\nمثال: `+989123456789`",
-                        reply_markup=kb
+                user_data = await self.is_registered(user_id)
+                if user_data:
+                    # کاربر ثبت‌نام کرده است -> نمایش پنل مدیریت
+                    is_online = user_id in ACTIVE_CLIENTS
+                    panel_text = (
+                        "👑 **پنل مدیریت اختصاصی سلف‌بات شما**\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🆔 شناسه کاربری: `{user_id}`\n"
+                        f"⚡️ وضعیت اتصال: {'فعال و آنلاین 🟢' if is_online else 'غیرفعال 🔴'}\n"
+                        f"💰 اعتبار سکه: `{user_data[1]}` سکه\n"
+                        f"💎 وضعیت اکانت: {'کاربر ویژه (VIP) 🌟' if user_data[2] else 'کاربر عادی'}\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n"
+                        "👇 برای مدیریت و تنظیم امکانات سلف، دکمه‌های زیر را لمس کنید:"
                     )
-
-                wait_msg = await self.send_message(chat_id, "⏳ در حال ارسال کد تایید به تلگرام شما...")
-                temp_client = Client(
-    f"temp_{user_id}",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    device_model="Desktop",
-    system_version="Windows 10",
-    app_version="4.16.8 x64",
-    lang_code="en",
-    in_memory=True
-                )
-                
-                try:
-                    await temp_client.connect()
-                    code_info = await temp_client.send_code(clean_phone)
-                    USER_AUTH_DATA[user_id] = {
-                        "client": temp_client,
-                        "phone": clean_phone,
-                        "phone_code_hash": code_info.phone_code_hash
-                    }
-                    USER_STATES[user_id] = "WAITING_CODE"
-
-                    kb = {"inline_keyboard": [[{"text": "🔙 لغو فرایند", "callback_data": "cancel_auth"}]]}
-                    prompt = (
-                        f"📩 **کد تایید به تلگرام شماره `{clean_phone}` ارسال شد!**\n\n"
-                        "⚠️ **نکته امنیتی بسیار مهم:**\n"
-                        "برای اینکه تلگرام پیام شما را بلاک نکند، کد را به صورت **فاصله‌دار** ارسال کنید.\n"
-                        "مثال: اگر کد دریافتی شما `54321` است، بفرستید: `5 4 3 2 1`"
-                    )
-                    return await self.send_message(chat_id, prompt, reply_markup=kb)
-
-                except FloodWait as e:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, f"⚠️ تلگرام به دلیل تلاش‌های مکرر شما را محدود کرده است. لطفاً `{e.value}` ثانیه صبر کنید.")
-                except PhoneNumberInvalid:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, "❌ شماره وارد شده نامعتبر یا در تلگرام ثبت نشده است.")
-                except Exception as e:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, f"❌ خطا در ارسال کد:\n`{str(e)}`")
-
-            # ۲. دریافت کد تایید ارسالی
-            elif USER_STATES.get(user_id) == "WAITING_CODE":
-                clean_code = re.sub(r"\D", "", text)
-                if len(clean_code) < 5:
-                    return await self.send_message(chat_id, "❌ لطفاً کد ۵ رقمی را به درستی وارد کنید.")
-
-                auth = USER_AUTH_DATA.get(user_id)
-                if not auth:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, "⚠️ نشست منقضی شد. لطفاً دوباره از /start شروع کنید.")
-
-                temp_client = auth["client"]
-                try:
-                    await temp_client.sign_in(auth["phone"], auth["phone_code_hash"], clean_code)
-                    session_str = await temp_client.export_session_string()
-                    await temp_client.disconnect()
-
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string) VALUES (?, ?)", (user_id, session_str))
-                        await db.commit()
-
-                    await self.cleanup_user(user_id)
-                    success_text = (
-                        "🎉 **سلف اختصاصی شما با موفقیت ساخته و متصل شد!**\n\n"
-                        "🔐 **استرینگ سشن اکانت شما (جهت ذخیره):**\n"
-                        f"`{session_str}`\n\n"
-                        "💡 **شروع به کار:**\n"
-                        "وارد Saved Messages اکانت خود شوید و دستورات زیر را تست کنید:\n"
-                        "• `.راهنما` — لیست فرامین و امکانات\n"
-                        "• `.نرخ ارز` — قیمت لحظه‌ای دلار و طلا\n"
-                        "• `.زمان اسم روشن` — ساعت متحرک روی نام شما"
-                    )
-                    return await self.send_message(chat_id, success_text)
-
-                except SessionPasswordNeeded:
-                    USER_STATES[user_id] = "WAITING_PASSWORD"
-                    kb = {"inline_keyboard": [[{"text": "🔙 لغو فرایند", "callback_data": "cancel_auth"}]]}
-                    return await self.send_message(
-                        chat_id,
-                        "🔐 **تایید دو مرحله‌ای (2FA) فعال است!**\n\n"
-                        "اکانت شما دارای گذرواژه ابری است. لطفاً رمز عبور اکانت تلگرام خود را بفرستید:\n"
-                        "*(پیام حاوی رمز عبور بلافاصله پس از پردازش جهت امنیت پاک خواهد شد)*",
-                        reply_markup=kb
-                    )
-                except (PhoneCodeInvalid, PhoneCodeExpired):
-                    return await self.send_message(chat_id, "❌ کد وارد شده اشتباه یا منقضی شده است. مجدداً ارسال کنید:")
-                except Exception as e:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, f"❌ خطا در احراز هویت:\n`{str(e)}`")
-
-            # ۳. دریافت رمز تایید دو مرحله‌ای
-            elif USER_STATES.get(user_id) == "WAITING_PASSWORD":
-                password = text
-                await self.delete_message(chat_id, msg_id)
-
-                auth = USER_AUTH_DATA.get(user_id)
-                if not auth:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, "⚠️ نشست منقضی شد. لطفاً از /start دوباره اقدام کنید.")
-
-                temp_client = auth["client"]
-                try:
-                    await temp_client.check_password(password)
-                    session_str = await temp_client.export_session_string()
-                    await temp_client.disconnect()
-
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string) VALUES (?, ?)", (user_id, session_str))
-                        await db.commit()
-
-                    await self.cleanup_user(user_id)
-                    success_text = (
-                        "🎉 **هویت شما با موفقیت تایید و سلف فعال شد!**\n\n"
-                        "🔐 **کد سشن اختصاصی شما:**\n"
-                        f"`{session_str}`\n\n"
-                        "📌 از این لحظه سلف روی اکانت شما روشن است. دستور `.راهنما` را در Saved Messages تست کنید."
-                    )
-                    return await self.send_message(chat_id, success_text)
-
-                except PasswordHashInvalid:
-                    return await self.send_message(chat_id, "❌ رمز عبور وارد شده اشتباه است! دوباره رمز را ارسال کنید:")
-                except Exception as e:
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, f"❌ خطا در ورود دو مرحله‌ای:\n`{str(e)}`")
-
-            # ۴. دریافت دستی سشن
-            elif USER_STATES.get(user_id) == "WAITING_MANUAL_SESSION":
-                if len(text) > 40:
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string) VALUES (?, ?)", (user_id, text))
-                        await db.commit()
-                    await self.cleanup_user(user_id)
-                    return await self.send_message(chat_id, "✅ **سلف شما با موفقیت متصل شد!**\nدستور `.راهنما` را در چت‌های خود تست کنید.")
+                    return await self.send_message(chat_id, panel_text, reply_markup=self.get_dashboard_kb(is_online))
                 else:
-                    return await self.send_message(chat_id, "❌ استرینگ سشن ارسالی نامعتبر است.")
+                    # کاربر جدید است -> هدایت به اتصال سشن
+                    kb = {
+                        "inline_keyboard": [
+                            [{"text": "🔑 اتصال و راه‌اندازی سلف", "callback_data": "submit_session"}],
+                            [{"text": "📖 راهنمای دریافت سشن", "callback_data": "help_session"}],
+                            [{"text": "📢 کانال رسمی", "url": CHANNEL_URL}]
+                        ]
+                    }
+                    welcome = (
+                        "👋 **به سامانه هوشمند و یکپارچه سلف‌ساز خوش آمدید!**\n\n"
+                        "برای اتصال اکانت خود به سلف و استفاده از ده‌ها پلاگین خفن، روی دکمه **اتصال و راه‌اندازی** کلیک کنید:"
+                    )
+                    return await self.send_message(chat_id, welcome, reply_markup=kb)
 
-        # ----------------- پردازش دکمه‌های شیشه‌ای -----------------
+            # دریافت استرینگ سشن ارسالی
+            if USER_STATES.get(user_id) == "WAITING_SESSION":
+                if len(text) > 40:
+                    wait_msg = await self.send_message(chat_id, "⏳ در حال بررسی سشن و فعال‌سازی آنی سلف...")
+                    
+                    # ذخیره در دیتابیس
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string, coins) VALUES (?, ?, 100)", (user_id, text))
+                        await db.commit()
+
+                    # استارت زنده در رم بدون ریستارت سرور!
+                    started = await start_single_client(user_id, text)
+                    USER_STATES.pop(user_id, None)
+
+                    if started:
+                        msg_ok = (
+                            "🎉 **سلف شما در همان لحظه با موفقیت روشن شد!**\n\n"
+                            "دیگر هیچ نیازی به ریستارت سرور نیست. هم‌اکنون می‌توانید از طریق پنل زیر سلف خود را مدیریت کنید."
+                        )
+                        await self.send_message(chat_id, msg_ok, reply_markup=self.get_dashboard_kb(True))
+                    else:
+                        await self.send_message(chat_id, "⚠️ سشن ذخیره شد اما در اتصال مشکلی رخ داد. لطفاً مطمئن شوید سشن معتبر است.")
+                else:
+                    await self.send_message(chat_id, "❌ استرینگ سشن ارسالی نامعتبر است.")
+
         elif "callback_query" in update:
             cq = update["callback_query"]
             chat_id = cq["message"]["chat"]["id"]
             user_id = cq.get("from", {}).get("id", chat_id)
             msg_id = cq["message"]["message_id"]
             data = cq.get("data")
-            await self.answer_callback(cq["id"])
 
-            if data == "auth_direct":
-                USER_STATES[user_id] = "WAITING_PHONE"
-                kb = {"inline_keyboard": [[{"text": "🔙 انصراف و بازگشت", "callback_data": "cancel_auth"}]]}
+            # --- بخش اتصال سشن ---
+            if data == "submit_session":
+                USER_STATES[user_id] = "WAITING_SESSION"
+                kb = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "back_home"}]]}
                 prompt = (
-                    "📱 **ورود مستقیم با شماره تلفن:**\n\n"
-                    "لطفاً شماره موبایل اکانت تلگرام خود را به همراه کد کشور بفرستید:\n\n"
-                    "📌 مثال برای شماره ایران:\n"
-                    "`+989123456789`"
+                    "📱 **ارسال استرینگ سشن:**\n\n"
+                    "لطفاً کد **String Session** اکانت خود را به این چت بفرستید تا سلف شما در همان لحظه روشن شود:"
                 )
-                await self.edit_message(chat_id, msg_id, prompt, reply_markup=kb)
-
-            elif data == "auth_manual":
-                USER_STATES[user_id] = "WAITING_MANUAL_SESSION"
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "📖 راهنمای سشن", "callback_data": "help_session"}],
-                        [{"text": "🔙 انصراف و بازگشت", "callback_data": "cancel_auth"}]
-                    ]
-                }
-                prompt = (
-                    "🔑 **ورود دستی با استرینگ سشن:**\n\n"
-                    "اگر از قبل کد String Session اکانت خود را دارید، آن را در قالب یک پیام به همین چت ارسال نمایید:"
-                )
-                await self.edit_message(chat_id, msg_id, prompt, reply_markup=kb)
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, prompt, reply_markup=kb)
 
             elif data == "help_session":
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "⚡️ شروع ساخت سلف با شماره", "callback_data": "auth_direct"}],
-                        [{"text": "🔙 بازگشت به منوی اصلی", "callback_data": "cancel_auth"}]
-                    ]
-                }
-                await self.edit_message(chat_id, msg_id, SESSION_HELP_TEXT, reply_markup=kb)
+                kb = {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "back_home"}]]}
+                text_help = (
+                    "📖 **راهنمای سریع دریافت سشن:**\n\n"
+                    "کافیست در ترموکس گوشی خود دستور ساخت سشن را اجرا کنید، شماره و کد تلگرام را بزنید و متن خروجی را اینجا بفرستید."
+                )
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, text_help, reply_markup=kb)
 
-            elif data == "cancel_auth":
-                await self.cleanup_user(user_id)
+            # --- دکمه‌های کنترل سلف (روشن/خاموش/ریستارت) ---
+            if data == "turn_off":
+                await stop_single_client(user_id)
+                await self.answer_callback(cq["id"], "🛑 سلف شما خاموش شد.")
+                return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (خاموش 🔴)**", reply_markup=self.get_dashboard_kb(False))
+
+            elif data == "turn_on":
+                user_data = await self.is_registered(user_id)
+                if user_data:
+                    await start_single_client(user_id, user_data[0])
+                    await self.answer_callback(cq["id"], "🟢 سلف شما روشن شد!")
+                    return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (روشن 🟢)**", reply_markup=self.get_dashboard_kb(True))
+
+            elif data == "restart_self":
+                user_data = await self.is_registered(user_id)
+                if user_data:
+                    await stop_single_client(user_id)
+                    await asyncio.sleep(1)
+                    await start_single_client(user_id, user_data[0])
+                    await self.answer_callback(cq["id"], "🔄 سلف شما با موفقیت ریستارت شد!")
+
+            # --- منوی زیرمجموعه‌ها ---
+            elif data == "p_time":
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "⚡️ ورود خودکار با شماره تلفن (سریع)", "callback_data": "auth_direct"}],
-                        [{"text": "🔑 ورود دستی با استرینگ سشن", "callback_data": "auth_manual"}],
-                        [{"text": "📖 راهنما و امنیت سلف", "callback_data": "help_session"}],
-                        [{"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
+                        [{"text": "🕒 ساعت روی اسم (روشن)", "callback_data": "act_time_name_on"}, {"text": "🛑 ساعت اسم (خاموش)", "callback_data": "act_time_name_off"}],
+                        [{"text": "📝 ساعت روی بیو (روشن)", "callback_data": "act_time_bio_on"}, {"text": "🛑 ساعت بیو (خاموش)", "callback_data": "act_time_bio_off"}],
+                        [{"text": "🎨 فونت ساعت (۱ تا ۲۱)", "callback_data": "act_font_list"}],
+                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
                     ]
                 }
-                await self.edit_message(chat_id, msg_id, "👑 **منوی اصلی سلف‌ساز:**\nیکی از گزینه‌های زیر را انتخاب نمایید:", reply_markup=kb)
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "⏰ **تنظیمات زمان، نام و بیوگرافی:**\nیکی از گزینه‌ها را انتخاب کنید:", reply_markup=kb)
+
+            elif data == "p_security":
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": "🛡 مدیریت دشمنان", "callback_data": "act_enemy_mgr"}, {"text": "❤️ مدیریت دوستان", "callback_data": "act_friend_mgr"}],
+                        [{"text": "🔒 ضد خیانت ادمین (Zed)", "callback_data": "act_zed"}, {"text": "🚫 ضد ادیت و حذف پیام", "callback_data": "act_antiedit"}],
+                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "🛡 **مدیریت امنیت، ضد خیانت و روابط:**", reply_markup=kb)
+
+            elif data == "p_ai":
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": "🤖 منشی هوشمند (روشن/خاموش)", "callback_data": "act_monshi_toggle"}],
+                        [{"text": "💼 بیزینس مود (ساعات کاری)", "callback_data": "act_biz_mode"}],
+                        [{"text": "💬 چت با هوش مصنوعی (.ai)", "callback_data": "act_ai_info"}],
+                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "🤖 **هوش مصنوعی و منشی اختصاصی:**", reply_markup=kb)
+
+            elif data == "p_tools":
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": "📥 دانلودر یوتیوب و موزیک", "callback_data": "info_yt"}, {"text": "📸 دانلودر اینستاگرام", "callback_data": "info_insta"}],
+                        [{"text": "🎥 تبدیل به ویدیو گرد", "callback_data": "info_round"}, {"text": "🖼 حذف پس‌زمینه عکس", "callback_data": "info_bg"}],
+                        [{"text": "🎵 تشخیص موزیک (شزم)", "callback_data": "info_shazam"}, {"text": "📁 سیو پیام ضد فوروارد", "callback_data": "info_save"}],
+                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "🛠 **ابزارها و دانلودرهای چندرسانه‌ای:**", reply_markup=kb)
+
+            elif data == "p_cleaner":
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": "🗑 حذف خودکار پیام‌ها (روشن)", "callback_data": "act_clean_on"}, {"text": "🛑 حذف خودکار (خاموش)", "callback_data": "act_clean_off"}],
+                        [{"text": "⏱ تنظیم تاخیر (ثانیه)", "callback_data": "act_clean_time"}],
+                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "🗑 **پاک‌سازی خودکار و زمان‌بندی شده چت‌ها:**", reply_markup=kb)
+
+            elif data == "p_prefix":
+                # سوئیچ روشن/خاموش کردن پیشوند نقطه (.)
+                cli = ACTIVE_CLIENTS.get(user_id)
+                if cli:
+                    cli.prefix_enabled = not getattr(cli, "prefix_enabled", True)
+                    st = "فعال (.)" if cli.prefix_enabled else "غیرفعال (بدون نقطه)"
+                    await self.answer_callback(cq["id"], f"پیشوند دستورات: {st}")
+                else:
+                    await self.answer_callback(cq["id"], "سلف شما خاموش است.")
+
+            elif data == "delete_self":
+                await stop_single_client(user_id)
+                async with aiosqlite.connect(DB_NAME) as db:
+                    await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+                    await db.commit()
+                await self.answer_callback(cq["id"], "سلف شما حذف شد.")
+                return await self.edit_message(chat_id, msg_id, "🛑 سلف شما حذف و اتصال قطع شد. برای اتصال مجدد /start را بزنید.")
+
+            elif data == "back_dashboard":
+                is_online = user_id in ACTIVE_CLIENTS
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت اختصاصی سلف‌بات:**", reply_markup=self.get_dashboard_kb(is_online))
+
+            elif data == "back_home":
+                USER_STATES.pop(user_id, None)
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": "🔑 اتصال و راه‌اندازی سلف", "callback_data": "submit_session"}],
+                        [{"text": "📖 راهنمای دریافت سشن", "callback_data": "help_session"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "👋 منوی اصلی:", reply_markup=kb)
+
+            else:
+                await self.answer_callback(cq["id"], "این قابلیت با فرامین چت نیز مستقیماً هماهنگ است.")
 
 bot = HttpBot()
