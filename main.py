@@ -43,7 +43,7 @@ async def main():
     print("⚡ Launching user selfbots...")
     await launch_selfs()
     
-    print("🚀 TeleBotCraft is online and fully functional on Railway!")
+    print("🚀 سلف ساز با موفقیت روشن شد!☀️")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
