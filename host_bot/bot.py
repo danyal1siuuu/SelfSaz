@@ -130,7 +130,7 @@ class HttpBot:
                         [{"text": "⚡️ ورود خودکار با شماره تلفن (پیشنهادی)", "callback_data": "auth_direct"}],
                         [{"text": "🔑 ورود دستی با استرینگ سشن", "callback_data": "auth_manual"}],
                         [{"text": "📖 راهنما و امنیت سلف", "callback_data": "help_session"}],
-                        [{"text": "📢 کانال پشتیبانی", "url": "https://t.me/YourChannelID"}]
+                        [{"text": "📢 کانال پشتیبانی", "url": "https://t.me/Vip_Viro"}]
                     ]
                 }
                 welcome = (
