@@ -25,7 +25,7 @@ async def save_restricted(client: Client, message: Message):
             await client.send_audio("me", dl_path, caption=cap)
         elif rep.document:
             await client.send_document("me", dl_path, caption=cap)
-        if os.path.exists(dl_path):
+        if dl_path and os.path.exists(dl_path):
             os.remove(dl_path)
         await message.edit_text("✅ با موفقیت در Saved Messages ذخیره شد!")
     except Exception as e:
@@ -35,8 +35,7 @@ async def save_restricted(client: Client, message: Message):
 async def set_quick_access(client: Client, message: Message):
     args = message.command_args.split(maxsplit=1)
     if not args or not message.reply_to_message:
-        return await message.edit_text("❌ دستور را به این شکل بفرستید (ریپلای روی متن):
-`.دسترسی کلمه`")
+        return await message.edit_text("❌ دستور را به این شکل بفرستید (ریپلای روی متن):\n`.دسترسی کلمه`")
     trigger = args[0]
     content = message.reply_to_message.text or message.reply_to_message.caption or ""
     async with aiosqlite.connect(DB_NAME) as db:
