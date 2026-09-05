@@ -2,12 +2,13 @@
 import asyncio
 import aiohttp
 import aiosqlite
+import json
 from config import BOT_TOKEN, DB_NAME
-from core.manager import start_single_client, stop_single_client, ACTIVE_CLIENTS
+from core.manager import start_single_client, stop_single_client, ACTIVE_CLIENTS, timename_loop
+from plugins.fun_crypto import fetch_live_market_data, format_market_display
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 CHANNEL_URL = "https://t.me/Vip_Viro"
-
 USER_STATES = {}
 
 class HttpBot:
@@ -15,7 +16,7 @@ class HttpBot:
         self.running = False
 
     async def send_message(self, chat_id, text, reply_markup=None):
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True}
         if reply_markup:
             payload["reply_markup"] = reply_markup
         try:
@@ -26,7 +27,7 @@ class HttpBot:
             pass
 
     async def edit_message(self, chat_id, message_id, text, reply_markup=None):
-        payload = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
+        payload = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True}
         if reply_markup:
             payload["reply_markup"] = reply_markup
         try:
@@ -47,24 +48,34 @@ class HttpBot:
         except Exception:
             pass
 
-    async def is_registered(self, user_id):
+    async def get_user_db(self, user_id):
         async with aiosqlite.connect(DB_NAME) as db:
-            cursor = await db.execute("SELECT session_string, coins, is_vip, prefix FROM users WHERE user_id = ?", (user_id,))
-            row = await cursor.fetchone()
-            return row if row else None
+            cursor = await db.execute("SELECT session_string, coins, is_vip, prefix, prefix_enabled, settings FROM users WHERE user_id = ?", (user_id,))
+            return await cursor.fetchone()
 
-    # ------------------ کیبورد داشبورد اصلی ------------------
-    def get_dashboard_kb(self, is_online):
-        status_btn = "🟢 وضعیت: روشن" if is_online else "🔴 وضعیت: خاموش"
-        toggle_cb = "turn_off" if is_online else "turn_on"
+    async def update_setting_db(self, user_id, key, val):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cursor = await db.execute("SELECT settings FROM users WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            st = json.loads(row[0]) if row and row[0] else {}
+            st[key] = val
+            await db.execute("UPDATE users SET settings = ? WHERE user_id = ?", (json.dumps(st), user_id))
+            await db.commit()
+            if user_id in ACTIVE_CLIENTS:
+                ACTIVE_CLIENTS[user_id].settings = st
+                setattr(ACTIVE_CLIENTS[user_id], key, val)
+
+    def get_main_dashboard_kb(self, is_online):
+        status_btn = "🟢 وضعیت سلف: روشن (خاموش کردن)" if is_online else "🔴 وضعیت سلف: خاموش (روشن کردن)"
+        toggle_cb = "btn_turn_off" if is_online else "btn_turn_on"
         return {
             "inline_keyboard": [
-                [{"text": status_btn, "callback_data": toggle_cb}, {"text": "🔄 ریستارت سلف", "callback_data": "restart_self"}],
-                [{"text": "⏰ زمان، نام و بیو", "callback_data": "p_time"}, {"text": "🛡 امنیت و دشمنان", "callback_data": "p_security"}],
-                [{"text": "🤖 منشی و هوش مصنوعی", "callback_data": "p_ai"}, {"text": "🛠 ابزارها و دانلودرها", "callback_data": "p_tools"}],
-                [{"text": "📢 همگانی و تبلیغات", "callback_data": "p_broadcast"}, {"text": "🗑 پاکسازی پیام‌ها", "callback_data": "p_cleaner"}],
-                [{"text": "⚡️ تغییر پیشوند (.)", "callback_data": "p_prefix"}, {"text": "🎮 بازی و کریپتو", "callback_data": "p_fun"}],
-                [{"text": "🛑 خروج و حذف سلف", "callback_data": "delete_self"}, {"text": "📢 کانال ما", "url": CHANNEL_URL}]
+                [{"text": status_btn, "callback_data": toggle_cb}],
+                [{"text": "🔄 راه‌اندازی مجدد سلف", "callback_data": "btn_restart"}, {"text": "📈 نرخ لحظه‌ای ارز و طلا", "callback_data": "menu_rates"}],
+                [{"text": "⏰ ساعت روی اسم", "callback_data": "menu_timename"}, {"text": "🤖 منشی هوشمند", "callback_data": "menu_monshi"}],
+                [{"text": "🗑 پاکسازی خودکار پیام‌ها", "callback_data": "menu_cleaner"}, {"text": "🛡 لیست دوستان و دشمنان", "callback_data": "menu_relations"}],
+                [{"text": "⚡️ تغییر پیشوند (.)", "callback_data": "menu_prefix"}, {"text": "🛠 جعبه ابزارها", "callback_data": "menu_tools"}],
+                [{"text": "🛑 خروج و پاک کردن اکانت", "callback_data": "btn_delete_account"}, {"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
             ]
         }
 
@@ -86,7 +97,7 @@ class HttpBot:
                     await asyncio.sleep(2)
 
     async def handle_update(self, update):
-        # ----------------- پیام‌های متنی -----------------
+        # ----------------- پردازش پیام‌ها -----------------
         if "message" in update:
             msg = update["message"]
             chat_id = msg["chat"]["id"]
@@ -94,59 +105,48 @@ class HttpBot:
             text = msg.get("text", "").strip()
 
             if text == "/start":
-                user_data = await self.is_registered(user_id)
-                if user_data:
+                USER_STATES.pop(user_id, None)
+                u = await self.get_user_db(user_id)
+                if u:
                     is_online = user_id in ACTIVE_CLIENTS
-                    panel_text = (
-                        "👑 **پنل مدیریت اختصاصی سلف‌بات شما**\n"
+                    p_text = (
+                        "👑 **داشبورد مدیریت یکپارچه سلف‌بات**\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🆔 شناسه کاربری: `{user_id}`\n"
-                        f"⚡️ وضعیت اتصال: {'فعال و آنلاین 🟢' if is_online else 'غیرفعال 🔴'}\n"
-                        f"💰 موجودی: `{user_data[1]}` سکه | پلن: {'ویژه (VIP) 💎' if user_data[2] else 'عادی'}\n"
+                        f"🆔 شناسه شما: `{user_id}`\n"
+                        f"⚡️ وضعیت اتصال: {'فعال و روشن 🟢' if is_online else 'خاموش 🔴'}\n"
+                        f"💰 اعتبار: `{u[1]}` سکه | پلن: {'VIP 💎' if u[2] else 'عادی'}\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n"
-                        "👇 برای کنترل هر بخش از دکمه‌های زیر استفاده کنید:"
+                        "👇 همه‌چیز کاملاً دکمه‌ای است؛ بخش دلخواه را انتخاب کنید:"
                     )
-                    return await self.send_message(chat_id, panel_text, reply_markup=self.get_dashboard_kb(is_online))
+                    return await self.send_message(chat_id, p_text, reply_markup=self.get_main_dashboard_kb(is_online))
                 else:
                     kb = {
                         "inline_keyboard": [
-                            [{"text": "🔑 اتصال و فعال‌سازی سلف", "callback_data": "submit_session"}],
-                            [{"text": "📖 راهنمای دریافت سشن", "callback_data": "help_session"}],
-                            [{"text": "📢 کانال پشتیبانی", "url": CHANNEL_URL}]
+                            [{"text": "🔑 اتصال اکانت (ارسال سشن)", "callback_data": "btn_submit_session"}],
+                            [{"text": "📢 کانال اطلاع‌رسانی", "url": CHANNEL_URL}]
                         ]
                     }
-                    welcome = (
-                        "👋 **به سامانه هوشمند و پیشرفته سلف‌ساز خوش آمدید!**\n\n"
-                        "برای اتصال اکانت خود به سلف و استفاده از تمام قابلیت‌ها، روی دکمه زیر کلیک کنید:"
-                    )
-                    return await self.send_message(chat_id, welcome, reply_markup=kb)
+                    return await self.send_message(chat_id, "👋 **به سیستم مدیریت سلف‌ساز خوش آمدید!**\n\nجهت راه‌اندازی و اتصال سلف خود روی دکمه زیر کلیک کنید:", reply_markup=kb)
 
-            # بررسی دریافت سشن ارسالی
+            # ارسال رشته سشن تنها در مرحله ثبت اولیه اکانت
             if USER_STATES.get(user_id) == "WAITING_SESSION":
                 if len(text) > 40:
-                    wait_msg = await self.send_message(chat_id, "⏳ در حال اتصال آنی سلف...")
-                    
-                    # ذخیره مطمئن در دیتابیس
+                    await self.send_message(chat_id, "⏳ در حال اتصال آنی سلف به سرور...")
                     async with aiosqlite.connect(DB_NAME) as db:
-                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string, coins) VALUES (?, ?, 100)", (user_id, text))
+                        await db.execute("INSERT OR REPLACE INTO users (user_id, session_string, coins, prefix, prefix_enabled, settings) VALUES (?, ?, 100, '.', 1, '{}')", (user_id, text))
                         await db.commit()
 
-                    # استارت لحظه‌ای در رم
                     started, err = await start_single_client(user_id, text)
                     USER_STATES.pop(user_id, None)
 
                     if started:
-                        msg_ok = (
-                            "🎉 **سلف شما در همان لحظه با موفقیت روشن شد!**\n\n"
-                            "اکنون می‌توانید از پنل زیر امکانات را خاموش و روشن کنید یا مستقیماً در اکانت خود دستورات را تست نمایید."
-                        )
-                        await self.send_message(chat_id, msg_ok, reply_markup=self.get_dashboard_kb(True))
+                        await self.send_message(chat_id, "🎉 **سلف شما با موفقیت روشن شد!** اکنون همه کارها را با دکمه‌ها کنترل کنید:", reply_markup=self.get_main_dashboard_kb(True))
                     else:
-                        await self.send_message(chat_id, f"❌ خطا در اتصال به تلگرام:\n`{err}`\n\nلطفاً مطمئن شوید سشن صحیح است.")
+                        await self.send_message(chat_id, f"❌ خطا در روشن شدن:\n`{err}`")
                 else:
                     await self.send_message(chat_id, "❌ استرینگ سشن ارسالی نامعتبر است.")
 
-        # ----------------- دکمه‌های شیشه‌ای -----------------
+        # ----------------- دکمه‌ها و کلیک‌ها -----------------
         elif "callback_query" in update:
             cq = update["callback_query"]
             chat_id = cq["message"]["chat"]["id"]
@@ -154,191 +154,266 @@ class HttpBot:
             msg_id = cq["message"]["message_id"]
             data = cq.get("data")
 
-            # ۱. دکمه‌های ورود و سشن
-            if data == "submit_session":
+            if data == "btn_submit_session":
                 USER_STATES[user_id] = "WAITING_SESSION"
                 kb = {"inline_keyboard": [[{"text": "🔙 انصراف", "callback_data": "back_home"}]]}
-                prompt = "📱 **ارسال استرینگ سشن:**\n\nکد String Session را در این چت بفرستید تا سلف فوراً روشن شود:"
                 await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, prompt, reply_markup=kb)
+                return await self.edit_message(chat_id, msg_id, "📱 استرینگ سشن (String Session) اکانت خود را در چت بفرستید:", reply_markup=kb)
 
-            elif data == "help_session":
-                kb = {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "back_home"}]]}
-                text_help = "📖 دستور ساخت سشن در ترموکس:\n`python -c \"...\"`\nسپس شماره و کد را بزنید و متن دریافتی را بفرستید."
-                await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, text_help, reply_markup=kb)
-
-            # ۲. کنترل وضعیت سلف
-            elif data == "turn_off":
+            # ۱. دکمه‌های روشن / خاموش و ریستارت
+            elif data == "btn_turn_off":
                 await stop_single_client(user_id)
                 await self.answer_callback(cq["id"], "🛑 سلف خاموش شد.")
-                return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (خاموش 🔴)**", reply_markup=self.get_dashboard_kb(False))
+                return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (خاموش 🔴)**", reply_markup=self.get_main_dashboard_kb(False))
 
-            elif data == "turn_on":
-                user_data = await self.is_registered(user_id)
-                if user_data:
-                    started, err = await start_single_client(user_id, user_data[0])
-                    if started:
+            elif data == "btn_turn_on":
+                u = await self.get_user_db(user_id)
+                if u:
+                    ok, err = await start_single_client(user_id, u[0])
+                    if ok:
                         await self.answer_callback(cq["id"], "🟢 سلف روشن شد!")
-                        return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (روشن 🟢)**", reply_markup=self.get_dashboard_kb(True))
+                        return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (روشن 🟢)**", reply_markup=self.get_main_dashboard_kb(True))
                     else:
-                        await self.answer_callback(cq["id"], f"خطا در روشن شدن: {err}", alert=True)
+                        await self.answer_callback(cq["id"], f"خطا در روشن شدن:\n{err}", alert=True)
 
-            elif data == "restart_self":
-                user_data = await self.is_registered(user_id)
-                if user_data:
+            elif data == "btn_restart":
+                u = await self.get_user_db(user_id)
+                if u:
                     await stop_single_client(user_id)
                     await asyncio.sleep(1)
-                    await start_single_client(user_id, user_data[0])
-                    await self.answer_callback(cq["id"], "🔄 سلف ریستارت و به‌روزرسانی شد!", alert=True)
+                    await start_single_client(user_id, u[0])
+                    await self.answer_callback(cq["id"], "🔄 سلف ریستارت شد!", alert=True)
+                    return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت سلف‌بات (روشن 🟢)**", reply_markup=self.get_main_dashboard_kb(True))
 
-            elif data == "delete_self":
-                # قطع ارتباط در رم
+            elif data == "btn_delete_account":
                 await stop_single_client(user_id)
-                # پاک کردن کامل از دیتابیس
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+                    await db.execute("DELETE FROM relations WHERE owner_id = ?", (user_id,))
                     await db.commit()
-                await self.answer_callback(cq["id"], "سلف شما با موفقیت حذف شد.", alert=True)
-                kb = {"inline_keyboard": [[{"text": "🔑 اتصال مجدد سلف", "callback_data": "submit_session"}]]}
-                return await self.edit_message(chat_id, msg_id, "🛑 **سلف شما به طور کامل حذف شد.** برای اتصال مجدد کلیک کنید:", reply_markup=kb)
+                await self.answer_callback(cq["id"], "اکانت و سلف شما پاک شد.", alert=True)
+                kb = {"inline_keyboard": [[{"text": "🔑 اتصال مجدد", "callback_data": "btn_submit_session"}]]}
+                return await self.edit_message(chat_id, msg_id, "🛑 سلف شما متوقف و حذف شد.", reply_markup=kb)
 
-            # ۳. منوی ساعت و نام (p_time)
-            elif data == "p_time":
+            # ۲. استعلام زنده و واقعی نرخ ارز و کریپتو (با دکمه رفرش)
+            elif data == "menu_rates" or data == "refresh_rates":
+                await self.answer_callback(cq["id"], "🔄 درحال استعلام مظنه زنده بازار...")
+                rates_data = await fetch_live_market_data()
+                market_text = format_market_display(rates_data)
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "🕒 ساعت روی اسم (دستور: .زمان اسم روشن)", "callback_data": "info_time_name"}],
-                        [{"text": "📝 ساعت روی بیوگرافی (دستور: .بیو زمان)", "callback_data": "info_time_bio"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                        [{"text": "🔄 به‌روزرسانی لحظه‌ای نرخ‌ها", "callback_data": "refresh_rates"}],
+                        [{"text": "🔙 بازگشت به منوی اصلی", "callback_data": "back_dashboard"}]
                     ]
                 }
-                await self.answer_callback(cq["id"])
-                txt = "⏰ **بخش زمان و پروفایل:**\nساعت سلف با ۲۱ فونت مختلف و هماهنگ با ثانیه کار می‌کند."
-                return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
+                return await self.edit_message(chat_id, msg_id, market_text, reply_markup=kb)
 
-            # ۴. منوی امنیت و دشمنان (p_security)
-            elif data == "p_security":
+            # ۳. ساعت روی اسم با دکمه و انتخاب فونت
+            elif data == "menu_timename":
+                cli = ACTIVE_CLIENTS.get(user_id)
+                t_on = getattr(cli, "timename_active", False) if cli else False
+                st_text = "خاموش کردن ساعت 🔴" if t_on else "روشن کردن ساعت 🟢"
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "🗑 پاکسازی کامل لیست دشمنان", "callback_data": "clear_enemies_action"}],
-                        [{"text": "🗑 پاکسازی کامل لیست دوستان", "callback_data": "clear_friends_action"}],
-                        [{"text": "🔒 راهنمای قفل‌های گروه (لینک، فوروارد)", "callback_data": "info_locks"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                        [{"text": st_text, "callback_data": "toggle_timename"}],
+                        [{"text": "فونت ۱ (𝟎𝟎:𝟎𝟎)", "callback_data": "font_1"}, {"text": "فونت ۲ (𝟘𝟘:𝟘𝟘)", "callback_data": "font_2"}, {"text": "فونت ۳ (⓪⓪:⓪⓪)", "callback_data": "font_3"}],
+                        [{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]
                     ]
                 }
                 await self.answer_callback(cq["id"])
                 txt = (
-                    "🛡 **مدیریت امنیت و دشمنان:**\n\n"
-                    "• برای افزودن دشمن در چت: ریپلای و ارسال `.افزودن دشمن`\n"
-                    "• برای افزودن دوست در چت: ریپلای و ارسال `.افزودن دوست`\n"
-                    "• پیام‌های حذفی و ادیت شده دیگران خودکار برای شما لاگ می‌شوند."
+                    "⏰ **بخش ساعت خودکار روی نام اکانت**\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"وضعیت فعلی: `{'روشن 🟢' if t_on else 'خاموش 🔴'}`\n\n"
+                    "با کلیک روی دکمه زیر ساعت به انتهای اسم شما متصل شده و هر دقیقه آپدیت می‌شود."
                 )
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
-            elif data == "clear_enemies_action":
+            elif data == "toggle_timename":
+                cli = ACTIVE_CLIENTS.get(user_id)
+                if not cli:
+                    return await self.answer_callback(cq["id"], "❌ سلف شما خاموش است؛ ابتدا آن را روشن کنید.", alert=True)
+                if cli.timename_active:
+                    cli.timename_active = False
+                    if cli.timename_task:
+                        cli.timename_task.cancel()
+                    await self.update_setting_db(user_id, "timename_active", False)
+                    await self.answer_callback(cq["id"], "🛑 ساعت خاموش شد.")
+                else:
+                    cli.timename_active = True
+                    await self.update_setting_db(user_id, "timename_active", True)
+                    cli.timename_task = asyncio.create_task(timename_loop(cli, cli.settings.get("timename_base", "Self"), cli.settings.get("timename_font", 1)))
+                    await self.answer_callback(cq["id"], "🟢 ساعت روی اسم روشن شد!")
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_timename"}})
+
+            elif data.startswith("font_"):
+                f_id = int(data.split("_")[1])
+                await self.update_setting_db(user_id, "timename_font", f_id)
+                await self.answer_callback(cq["id"], f"✅ فونت {f_id} فعال شد.", alert=True)
+
+            # ۴. منشی هوشمند
+            elif data == "menu_monshi":
+                cli = ACTIVE_CLIENTS.get(user_id)
+                m_on = getattr(cli, "monshi_active", False) if cli else False
+                st_text = "خاموش کردن منشی 🔴" if m_on else "روشن کردن منشی 🟢"
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": st_text, "callback_data": "toggle_monshi"}],
+                        [{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                txt = (
+                    "🤖 **منشی پاسخگوی خودکار پی‌وی**\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"وضعیت: `{'فعال و آماده 🟢' if m_on else 'غیرفعال 🔴'}`\n\n"
+                    "در صورت روشن بودن، به پیام‌های جدید پی‌وی پاسخ خودکار ارسال خواهد شد."
+                )
+                return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
+
+            elif data == "toggle_monshi":
+                cli = ACTIVE_CLIENTS.get(user_id)
+                if not cli:
+                    return await self.answer_callback(cq["id"], "❌ سلف شما خاموش است.", alert=True)
+                cli.monshi_active = not getattr(cli, "monshi_active", False)
+                await self.update_setting_db(user_id, "monshi_active", cli.monshi_active)
+                await self.answer_callback(cq["id"], f"منشی: {'روشن شد 🟢' if cli.monshi_active else 'خاموش شد 🔴'}")
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_monshi"}})
+
+            # ۵. پاکسازی خودکار پیام‌ها با انتخاب ثانیه‌ها
+            elif data == "menu_cleaner":
+                cli = ACTIVE_CLIENTS.get(user_id)
+                c_on = getattr(cli, "cleaner_active", False) if cli else False
+                delay = getattr(cli, "cleaner_delay", 20) if cli else 20
+                st_text = "خاموش کردن پاکسازی 🔴" if c_on else "روشن کردن پاکسازی 🟢"
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": st_text, "callback_data": "toggle_cleaner"}],
+                        [{"text": "⏱ ۱۰ ثانیه", "callback_data": "sec_10"}, {"text": "⏱ ۳۰ ثانیه", "callback_data": "sec_30"}, {"text": "⏱ ۶۰ ثانیه", "callback_data": "sec_60"}],
+                        [{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                txt = (
+                    "🗑 **پاکسازی خودکار پیام‌های ارسالی شما**\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"وضعیت: `{'روشن 🟢' if c_on else 'خاموش 🔴'}` | تاخیر: `{delay}` ثانیه\n\n"
+                    "پیام‌هایی که در پی‌وی بفرستید پس از این تایم خودکار حذف می‌شوند."
+                )
+                return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
+
+            elif data == "toggle_cleaner":
+                cli = ACTIVE_CLIENTS.get(user_id)
+                if not cli:
+                    return await self.answer_callback(cq["id"], "❌ ابتدا سلف را روشن کنید.", alert=True)
+                cli.cleaner_active = not getattr(cli, "cleaner_active", False)
+                await self.update_setting_db(user_id, "cleaner_active", cli.cleaner_active)
+                await self.answer_callback(cq["id"], f"پاکسازی خودکار: {'فعال شد 🟢' if cli.cleaner_active else 'خاموش شد 🔴'}")
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_cleaner"}})
+
+            elif data.startswith("sec_"):
+                sec = int(data.split("_")[1])
+                await self.update_setting_db(user_id, "cleaner_delay", sec)
+                await self.answer_callback(cq["id"], f"⏱ تایمر پاکسازی روی {sec} ثانیه ذخیره شد!", alert=True)
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_cleaner"}})
+
+# ۶. امنیت و دوستان و دشمنان
+            elif data == "menu_relations":
+                async with aiosqlite.connect(DB_NAME) as db:
+                    c1 = await db.execute("SELECT COUNT(*) FROM relations WHERE owner_id = ? AND type = 'enemy'", (user_id,))
+                    ec = (await c1.fetchone())[0]
+                    c2 = await db.execute("SELECT COUNT(*) FROM relations WHERE owner_id = ? AND type = 'friend'", (user_id,))
+                    fc = (await c2.fetchone())[0]
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": f"🗑 پاکسازی کامل دشمنان ({ec})", "callback_data": "clear_enemies"}, {"text": f"🗑 پاکسازی کامل دوستان ({fc})", "callback_data": "clear_friends"}],
+                        [{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]
+                    ]
+                }
+                await self.answer_callback(cq["id"])
+                txt = (
+                    "🛡 **داشبورد امنیت و روابط**\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⚔️ تعداد افراد در لیست دشمن: `{ec}` نفر\n"
+                    f"❤️ تعداد افراد در لیست دوست: `{fc}` نفر\n\n"
+                    "پیام‌های پاک شده یا ادیت شده توسط دیگران خودکار برای شما در Saved Messages ذخیره و لاگ می‌شوند."
+                )
+                return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
+
+            elif data == "clear_enemies":
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute("DELETE FROM relations WHERE owner_id = ? AND type = 'enemy'", (user_id,))
                     await db.commit()
-                await self.answer_callback(cq["id"], "🗑 تمامی کاربران از لیست دشمنان شما حذف شدند!", alert=True)
+                await self.answer_callback(cq["id"], "🗑 لیست دشمنان خالی شد.", alert=True)
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_relations"}})
 
-            elif data == "clear_friends_action":
+            elif data == "clear_friends":
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute("DELETE FROM relations WHERE owner_id = ? AND type = 'friend'", (user_id,))
                     await db.commit()
-                await self.answer_callback(cq["id"], "🗑 تمامی کاربران از لیست دوستان شما حذف شدند!", alert=True)
+                await self.answer_callback(cq["id"], "🗑 لیست دوستان خالی شد.", alert=True)
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_relations"}})
 
-            # ۵. منوی هوش مصنوعی و منشی (p_ai)
-            elif data == "p_ai":
+            # ۷. دکمه‌های انتخاب پیشوند
+            elif data == "menu_prefix":
+                u = await self.get_user_db(user_id)
+                curr_p = u[3] if u else "."
                 kb = {
                     "inline_keyboard": [
-                        [{"text": "🤖 راهنمای منشی خودکار (.منشی روشن)", "callback_data": "info_monshi"}],
-                        [{"text": "💬 چت با هوش مصنوعی (.ai سوال شما)", "callback_data": "info_ai"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
+                        [{"text": "نقطه (.)", "callback_data": "set_dot"}, {"text": "اسلش (/)", "callback_data": "set_slash"}, {"text": "تعجب (!)", "callback_data": "set_excl"}],
+                        [{"text": "بدون علامت (متن خام)", "callback_data": "set_none"}],
+                        [{"text": "🔙 بازگشت", "callback_data": "back_dashboard"}]
                     ]
                 }
                 await self.answer_callback(cq["id"])
-                txt = "🤖 **تنظیمات هوش مصنوعی و منشی:**\nدر زمان آفلاین بودن، منشی به صورت هوشمند و محترمانه پاسخ چت‌های شما را می‌دهد."
+                return await self.edit_message(chat_id, msg_id, f"⚡️ **تنظیم پیشوند دستورات سلف**\n\nپیشوند فعلی: `{curr_p}`\nیکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=kb)
+
+            elif data in ["set_dot", "set_slash", "set_excl", "set_none"]:
+                mapping = {"set_dot": ".", "set_slash": "/", "set_excl": "!", "set_none": ""}
+                new_p = mapping[data]
+                is_on = 0 if data == "set_none" else 1
+                async with aiosqlite.connect(DB_NAME) as db:
+                    await db.execute("UPDATE users SET prefix = ?, prefix_enabled = ? WHERE user_id = ?", (new_p, is_on, user_id))
+                    await db.commit()
+                if user_id in ACTIVE_CLIENTS:
+                    ACTIVE_CLIENTS[user_id].custom_prefix = new_p
+                    ACTIVE_CLIENTS[user_id].prefix_enabled = bool(is_on)
+                await self.answer_callback(cq["id"], "✅ پیشوند سلف تغییر یافت.", alert=True)
+                return await self.handle_update({"callback_query": {**cq, "data": "menu_prefix"}})
+
+            # ۸. جعبه ابزارها
+            elif data == "menu_tools":
+                kb = {"inline_keyboard": [[{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]]}
+                await self.answer_callback(cq["id"])
+                txt = (
+                    "🛠 **جعبه ابزارهای هوشمند سلف**\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "• **دانلودر یوتیوب:** ارسال لینک مستقیم ویدیو در چت جهت دریافت فایل\n"
+                    "• **ویدیو نوت گرد:** ریپلای روی هر فیلم جهت تبدیل به ویدیوی دایره‌ای\n"
+                    "• **سیو محتوای ضد فوروارد:** ریپلای روی فایل در کانال‌های قفل‌دار جهت ذخیره در Saved Messages"
+                )
                 return await self.edit_message(chat_id, msg_id, txt, reply_markup=kb)
 
-            # ۶. منوی ابزارها و دانلودرها (p_tools)
-            elif data == "p_tools":
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "🎥 ویدیو گرد: ریپلای و ارسال .تلسکوپ", "callback_data": "info_dummy"}],
-                        [{"text": "📥 یوتیوب: .یوتوب + لینک", "callback_data": "info_dummy"}],
-                        [{"text": "💾 سیو پیام فوروارد قفل: ریپلای و .سیو", "callback_data": "info_dummy"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
-                    ]
-                }
-                await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "🛠 **راهنمای سریع دانلودرها و ابزارها:**", reply_markup=kb)
-
-            # ۷. منوی پاکسازی پیام‌ها (p_cleaner)
-            elif data == "p_cleaner":
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "⏱ روشن کردن: .حذف کن روشن", "callback_data": "info_dummy"}],
-                        [{"text": "🛑 خاموش کردن: .حذف کن خاموش", "callback_data": "info_dummy"}],
-                        [{"text": "⚙️ تغییر زمان: .حذف کن تنظیم 30", "callback_data": "info_dummy"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
-                    ]
-                }
-                await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "🗑 **پاک‌سازی خودکار پیام‌ها:**\nبا فعال کردن این بخش، پیام‌های ارسالی شما پس از زمان مشخص شده خودکار پاک می‌شوند.", reply_markup=kb)
-
-            # ۸. منوی همگانی و تبلیغات (p_broadcast)
-            elif data == "p_broadcast":
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "📢 تنظیم بنر: ریپلای و .پیام فرستنده", "callback_data": "info_dummy"}],
-                        [{"text": "🚀 ارسال به آنلاین‌ها: .فرستنده", "callback_data": "info_dummy"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
-                    ]
-                }
-                await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "📢 **سیستم تبچی و ارسال هوشمند به اعضای آنلاین:**", reply_markup=kb)
-
-            # ۹. منوی بازی و سرگرمی (p_fun)
-            elif data == "p_fun":
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "📊 نرخ ارز: .نرخ ارز", "callback_data": "info_dummy"}],
-                        [{"text": "🐱 میو خودکار: .میو روشن", "callback_data": "info_dummy"}],
-                        [{"text": "📍 لوکیشن فیک: .لوکیشن جعلی تهران", "callback_data": "info_dummy"}],
-                        [{"text": "🔙 بازگشت به داشبورد", "callback_data": "back_dashboard"}]
-                    ]
-                }
-                await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "🎮 **امکانات سرگرمی، مالی و بازی:**", reply_markup=kb)
-
-            # ۱۰. تغییر پیشوند دستورات (نقطه .)
-            elif data == "p_prefix":
-                cli = ACTIVE_CLIENTS.get(user_id)
-                if cli:
-                    cli.prefix_enabled = not getattr(cli, "prefix_enabled", True)
-                    st = "فعال (.)" if cli.prefix_enabled else "غیرفعال (بدون نقطه)"
-                    await self.answer_callback(cq["id"], f"پیشوند دستورات: {st}", alert=True)
-                else:
-                    await self.answer_callback(cq["id"], "سلف شما خاموش است؛ ابتدا آن را روشن کنید.", alert=True)
-
-            # برگشت‌ها
+            # دکمه‌های بازگشت
             elif data == "back_dashboard":
                 is_online = user_id in ACTIVE_CLIENTS
+                u = await self.get_user_db(user_id)
                 await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "👑 **پنل مدیریت اختصاصی سلف‌بات:**", reply_markup=self.get_dashboard_kb(is_online))
+                p_text = (
+                    "👑 **داشبورد مدیریت یکپارچه سلف‌بات**\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🆔 شناسه شما: `{user_id}`\n"
+                    f"⚡️ وضعیت اتصال: {'فعال و روشن 🟢' if is_online else 'خاموش 🔴'}\n"
+                    f"💰 اعتبار: `{u[1]}` سکه | پلن: {'VIP 💎' if u[2] else 'عادی'}\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "👇 همه‌چیز کاملاً دکمه‌ای است؛ بخش دلخواه را انتخاب کنید:"
+                )
+                return await self.edit_message(chat_id, msg_id, p_text, reply_markup=self.get_main_dashboard_kb(is_online))
 
             elif data == "back_home":
                 USER_STATES.pop(user_id, None)
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "🔑 اتصال و فعال‌سازی سلف", "callback_data": "submit_session"}],
-                        [{"text": "📖 راهنمای دریافت سشن", "callback_data": "help_session"}]
-                    ]
-                }
+                kb = {"inline_keyboard": [[{"text": "🔑 اتصال اکانت (ارسال سشن)", "callback_data": "btn_submit_session"}]]}
                 await self.answer_callback(cq["id"])
-                return await self.edit_message(chat_id, msg_id, "👋 منوی اصلی:", reply_markup=kb)
-
-            else:
-                await self.answer_callback(cq["id"])
+                return await self.edit_message(chat_id, msg_id, "👋 لطفاً انتخاب کنید:", reply_markup=kb)
 
 bot = HttpBot()
