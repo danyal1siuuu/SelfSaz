@@ -48,7 +48,7 @@ def add_system_log(text: str):
         SYSTEM_LOGS.pop(0)
         class HttpBot:
             def __init__(self):
-        self.running = False
+                self.running = False
 
     async def send_message(self, chat_id, text, reply_markup=None):
         payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True}
