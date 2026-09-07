@@ -1,0 +1,3 @@
+این نسخه Update-only اصلاح‌شده است.
+علت خطای قبلی: core/system_settings.py و core/membership.py در بسته Update-only جا افتاده بودند.
+محتویات را روی پروژه فعلی Merge + Replace کنید. .env واقعی و دیتابیس/volume را حذف نکنید.
