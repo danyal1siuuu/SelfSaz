@@ -1,0 +1,25 @@
+SelfSaz Railway Fix
+===================
+
+What was fixed:
+1. Railway/stdout logging is now flushed and important Telegram API failures are printed.
+2. Callback handler exceptions are printed with traceback instead of being kept only in memory.
+3. Startup checks Telegram getWebhookInfo and removes a leftover webhook (without dropping pending updates) so getUpdates polling can work.
+4. Polling explicitly requests message and callback_query updates and logs non-200/API failures.
+5. sendMessage/editMessageText/answerCallbackQuery now log Telegram API rejection details.
+6. .env.example was sanitized so credentials are not stored in the example file.
+
+Deploy:
+- Keep your real values only in Railway Variables.
+- Redeploy the service after replacing the project files.
+- Open Railway Observability/Log Explorer or the service deployment logs and look for:
+  HTTP Bot service started successfully.
+  No webhook configured; long polling is active.
+  Telegram bot authenticated as @...
+  Update received: ...
+
+Important:
+This project is a long-polling bot. Do not run a second copy of the same bot token elsewhere, because multiple consumers can interfere with updates.
+
+Security:
+The uploaded archive contained credentials-looking values in .env.example. Rotate/revoke any real BOT_TOKEN/API keys/API_HASH that were actually valid, then store the replacements only in Railway Variables.

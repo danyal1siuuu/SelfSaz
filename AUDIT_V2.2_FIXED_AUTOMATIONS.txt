@@ -1,0 +1,28 @@
+SelfSaz V2.2 FIXED - code audit notes
+======================================
+
+Static checks performed:
+- Python AST parse across all project .py files.
+- python -m compileall across all project .py files.
+- Callback-data graph check across host_bot/bot.py + core/plans.py.
+- Admin sections 1..19 checked for menu handler + keyboard method presence.
+- Plan/rank callback coverage checked in core/plans.py.
+- Account automation commands and persisted task startup paths reviewed.
+- Session login state machine reviewed.
+
+Fixes in this audited build:
+- Added safe update dispatcher so unhandled callback exceptions are returned to the user instead of silently killing a task.
+- editMessageText now falls back to sendMessage when Telegram rejects an edit, which prevents many apparently-dead inline buttons.
+- Fixed admin global state toggles to use module globals correctly.
+- Made several admin actions that previously returned success text perform a real operation or an actual health check.
+- Added a real admin state for per-user session health checking.
+- Global monshi disable now persists to every user, not just in-memory clients.
+- Global timename enable preserves each client's selected font and restarts its task safely.
+- AI memory cleanup action now removes the AI memory rows it claims to remove.
+- Safer AI usage queries avoid JSON parsing failures on malformed legacy settings.
+- Session strings are no longer echoed back to chats after 2FA login; they remain server-side.
+
+Important verification boundary:
+This environment does not have the project's runtime dependencies/network credentials, so a live Telegram login, Bot API callback round-trip, Pyrogram account action, and external AI/YouTube API integration cannot be executed here. Syntax/static checks passed; live Telegram behavior still needs a real deployment test with the user's own configured environment.
+
+QR behavior intentionally remains manual-refresh only; no automatic QR refresh was added.
